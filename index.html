@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dota 2 Draft Advisor</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div id="app">
+    <!-- Header -->
+    <header class="header">
+      <div class="header-left">
+        <h1 class="logo">
+          <svg class="logo-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+            <path d="M2 17l10 5 10-5"/>
+            <path d="M2 12l10 5 10-5"/>
+          </svg>
+          Draft Advisor
+        </h1>
+      </div>
+      <div class="header-center">
+        <div class="position-selector">
+          <span class="position-label">Твоя позиція:</span>
+          <div class="position-buttons" id="positionButtons">
+            <button class="pos-btn" data-pos="1" title="Carry (Safe Lane)">
+              <span class="pos-icon">1</span>
+              <span class="pos-name">Carry</span>
+            </button>
+            <button class="pos-btn" data-pos="2" title="Mid Lane">
+              <span class="pos-icon">2</span>
+              <span class="pos-name">Mid</span>
+            </button>
+            <button class="pos-btn" data-pos="3" title="Offlane">
+              <span class="pos-icon">3</span>
+              <span class="pos-name">Offlane</span>
+            </button>
+            <button class="pos-btn" data-pos="4" title="Soft Support">
+              <span class="pos-icon">4</span>
+              <span class="pos-name">Sup</span>
+            </button>
+            <button class="pos-btn" data-pos="5" title="Hard Support">
+              <span class="pos-icon">5</span>
+              <span class="pos-name">Hard Sup</span>
+            </button>
+          </div>
+        </div>
+      </div>
+      <div class="header-right">
+        <button class="reset-btn" id="resetBtn" title="Скинути все">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+            <path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
+          </svg>
+          Скинути
+        </button>
+      </div>
+    </header>
+
+    <!-- Draft Area -->
+    <section class="draft-area">
+      <!-- Radiant Team (Allies) -->
+      <div class="team-panel radiant">
+        <h2 class="team-title radiant-title">
+          <span class="team-icon">&#9788;</span> Союзники
+          <span class="team-count" id="allyCount">0/4</span>
+        </h2>
+        <div class="team-slots" id="allySlots">
+          <div class="hero-slot empty" data-index="0"><span class="slot-label">Союзник 1</span></div>
+          <div class="hero-slot empty" data-index="1"><span class="slot-label">Союзник 2</span></div>
+          <div class="hero-slot empty" data-index="2"><span class="slot-label">Союзник 3</span></div>
+          <div class="hero-slot empty" data-index="3"><span class="slot-label">Союзник 4</span></div>
+        </div>
+      </div>
+
+      <!-- Dire Team (Enemies) -->
+      <div class="team-panel dire">
+        <h2 class="team-title dire-title">
+          <span class="team-icon">&#9760;</span> Вороги
+          <span class="team-count" id="enemyCount">0/5</span>
+        </h2>
+        <div class="team-slots" id="enemySlots">
+          <div class="hero-slot empty" data-index="0"><span class="slot-label">Ворог 1</span></div>
+          <div class="hero-slot empty" data-index="1"><span class="slot-label">Ворог 2</span></div>
+          <div class="hero-slot empty" data-index="2"><span class="slot-label">Ворог 3</span></div>
+          <div class="hero-slot empty" data-index="3"><span class="slot-label">Ворог 4</span></div>
+          <div class="hero-slot empty" data-index="4"><span class="slot-label">Ворог 5</span></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Mode Toggle -->
+    <div class="mode-toggle-bar">
+      <span class="mode-hint">Режим додавання:</span>
+      <div class="mode-toggle" id="modeToggle">
+        <button class="mode-btn active" data-mode="ally">
+          <span class="mode-dot radiant-dot"></span> Союзник
+        </button>
+        <button class="mode-btn" data-mode="enemy">
+          <span class="mode-dot dire-dot"></span> Ворог
+        </button>
+      </div>
+    </div>
+
+    <!-- Hero Grid -->
+    <section class="hero-grid-section">
+      <div class="grid-controls">
+        <div class="search-box">
+          <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+            <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+          </svg>
+          <input type="text" id="heroSearch" placeholder="Пошук героя..." autocomplete="off">
+        </div>
+        <div class="attr-filters" id="attrFilters">
+          <button class="attr-btn active" data-attr="all">Всі</button>
+          <button class="attr-btn str" data-attr="str">
+            <span class="attr-icon str-icon"></span> STR
+          </button>
+          <button class="attr-btn agi" data-attr="agi">
+            <span class="attr-icon agi-icon"></span> AGI
+          </button>
+          <button class="attr-btn int" data-attr="int">
+            <span class="attr-icon int-icon"></span> INT
+          </button>
+          <button class="attr-btn all-attr" data-attr="all_attr">
+            <span class="attr-icon all-icon"></span> UNI
+          </button>
+        </div>
+      </div>
+      <div class="hero-grid" id="heroGrid">
+        <div class="loading-spinner" id="loadingSpinner">
+          <div class="spinner"></div>
+          <p>Завантаження героїв...</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Recommendations -->
+    <section class="recommendations-section" id="recommendationsSection">
+      <h2 class="rec-title">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="22" height="22">
+          <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+        </svg>
+        Рекомендації
+        <span class="rec-subtitle" id="recSubtitle">Обери позицію для початку</span>
+      </h2>
+      <div class="rec-grid" id="recGrid">
+        <div class="rec-placeholder">
+          <p>Обери свою позицію та додай героїв ворожої/союзної команди для отримання рекомендацій</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Error Toast -->
+    <div class="toast-container" id="toastContainer"></div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
