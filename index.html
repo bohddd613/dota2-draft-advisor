@@ -155,6 +155,22 @@
 
     <!-- Error Toast -->
     <div class="toast-container" id="toastContainer"></div>
+
+    <!-- Score Breakdown Modal -->
+    <div class="modal-backdrop" id="modalBackdrop" hidden>
+      <div class="modal" id="scoreModal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+        <button class="modal-close" id="modalClose" aria-label="Закрити">×</button>
+        <div class="modal-header">
+          <img class="modal-hero-img" id="modalHeroImg" alt="">
+          <div>
+            <h3 id="modalTitle" class="modal-title"></h3>
+            <p class="modal-subtitle" id="modalSubtitle"></p>
+          </div>
+          <div class="modal-score" id="modalScore"></div>
+        </div>
+        <div class="modal-body" id="modalBody"></div>
+      </div>
+    </div>
   </div>
 
   <script src="app.js"></script>
