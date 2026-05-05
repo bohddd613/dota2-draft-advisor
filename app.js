@@ -352,13 +352,11 @@ function clamp(v, min = 0, max = 1) {
 
 function renderHeroGrid() {
   const grid = document.getElementById('heroGrid');
-  const spinner = document.getElementById('loadingSpinner');
 
   if (state.loading) {
-    spinner.style.display = 'flex';
+    grid.innerHTML = '<div class="loading-spinner"><div class="spinner"></div><p>Завантаження героїв...</p></div>';
     return;
   }
-  spinner.style.display = 'none';
 
   const pickedIds = new Set([...state.allies, ...state.enemies]);
   let filtered = state.heroes;
