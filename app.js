@@ -29,11 +29,17 @@ const POSITION_ROLE_WEIGHTS = {
   5: { Support: 4, Disabler: 1, Durable: 1 },
 };
 
-// Scoring weights (sum to 1)
-const SCORE_WEIGHTS = {
-  baseWinrate: 0.30,
-  positionFit: 0.25,
-  counterScore: 0.30,
+// Scoring weights — when enemies are picked, counter matters more
+const SCORE_WEIGHTS_NO_ENEMIES = {
+  baseWinrate: 0.45,
+  positionFit: 0.40,
+  counterScore: 0.00,
+  synergyScore: 0.15,
+};
+const SCORE_WEIGHTS_WITH_ENEMIES = {
+  baseWinrate: 0.25,
+  positionFit: 0.20,
+  counterScore: 0.40,
   synergyScore: 0.15,
 };
 
@@ -297,15 +303,16 @@ function computeRecommendations() {
     const synergyScore = computeSynergyScore(hero.id, state.allies);
 
     // Normalize scores to 0-1 range
-    const normalizedWr = (baseWinrate - 0.35) / 0.30; // 35%-65% → 0-1
-    const normalizedCounter = (counterScore + 0.15) / 0.30; // -15% to +15% → 0-1
+    const normalizedWr = (baseWinrate - 0.40) / 0.20; // 40%-60% → 0-1
+    const normalizedCounter = (counterScore + 0.10) / 0.20; // -10% to +10% → 0-1
     const normalizedSynergy = synergyScore / 0.30; // 0-30% → 0-1
 
+    const w = state.enemies.length > 0 ? SCORE_WEIGHTS_WITH_ENEMIES : SCORE_WEIGHTS_NO_ENEMIES;
     const finalScore =
-      SCORE_WEIGHTS.baseWinrate * clamp(normalizedWr) +
-      SCORE_WEIGHTS.positionFit * clamp(positionFit) +
-      SCORE_WEIGHTS.counterScore * clamp(normalizedCounter) +
-      SCORE_WEIGHTS.synergyScore * clamp(normalizedSynergy);
+      w.baseWinrate * clamp(normalizedWr) +
+      w.positionFit * clamp(positionFit) +
+      w.counterScore * clamp(normalizedCounter) +
+      w.synergyScore * clamp(normalizedSynergy);
 
     // Generate explanation tags
     const tags = [];
@@ -313,8 +320,9 @@ function computeRecommendations() {
     if (positionFit >= 0.5) {
       tags.push({ type: 'fit', text: `Pos ${state.selectedPosition}` });
     }
-    if (counterScore > 0.02 && state.enemies.length > 0) {
-      tags.push({ type: 'counter', text: `Counter +${(counterScore * 100).toFixed(1)}%` });
+    if (state.enemies.length > 0 && Math.abs(counterScore) > 0.003) {
+      const sign = counterScore > 0 ? '+' : '';
+      tags.push({ type: 'counter', text: `vs ворогів ${sign}${(counterScore * 100).toFixed(1)}%` });
     }
     if (synergyScore > 0.05 && state.allies.length > 0) {
       tags.push({ type: 'synergy', text: 'Synergy' });
@@ -500,7 +508,8 @@ function addHeroToDraft(heroId) {
     state.enemies.push(heroId);
   }
 
-  updateDraft();
+  // Fire and forget but ensure recommendations render after matchups load
+  updateDraftWithLoading();
 }
 
 function removeHeroFromDraft(heroId, team) {
@@ -509,20 +518,26 @@ function removeHeroFromDraft(heroId, team) {
   } else {
     state.enemies = state.enemies.filter(id => id !== heroId);
   }
-  updateDraft();
+  updateDraftWithLoading();
 }
 
-async function updateDraft() {
+async function updateDraftWithLoading() {
   renderTeamSlots();
   renderHeroGrid();
 
-  // Load matchup data for picked heroes
+  // Show loading in recommendations while fetching matchups
   if (state.enemies.length > 0 || state.allies.length > 0) {
+    const recGrid = document.getElementById('recGrid');
+    if (state.selectedPosition) {
+      recGrid.innerHTML = '<div class="rec-placeholder"><div class="spinner" style="margin:0 auto"></div><p style="margin-top:8px">Завантаження матчапів...</p></div>';
+    }
     await loadMatchupsForPicks();
   }
 
   renderRecommendations();
 }
+
+
 
 function selectPosition(pos) {
   state.selectedPosition = pos;
