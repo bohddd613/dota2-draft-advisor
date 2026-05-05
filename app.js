@@ -20,14 +20,146 @@ const POSITIONS = {
   5: { name: 'Hard Support', lane: 'Safe Lane' },
 };
 
-// Role weights for position affinity scoring
-const POSITION_ROLE_WEIGHTS = {
-  1: { Carry: 4, Escape: 1, Pusher: 1 },
-  2: { Nuker: 3, Carry: 2, Escape: 1, Disabler: 1 },
-  3: { Initiator: 3, Durable: 3, Disabler: 1, Nuker: 1 },
-  4: { Support: 2, Initiator: 2, Disabler: 2, Nuker: 1, Escape: 1 },
-  5: { Support: 4, Disabler: 1, Durable: 1 },
+// Curated hero-position eligibility map (current 7.36+ meta).
+// Per hero ID: ordered list of positions the hero plays.
+// First entry is the PRIMARY position; subsequent are flex/secondary.
+// If a position is not in the list, the hero is filtered out as candidate.
+// Source: high-MMR pickrate data (Dotabuff/Stratz public stats).
+const HERO_POSITIONS = {
+  102: [3, 5, 1],     // Abaddon
+  73:  [1, 2],        // Alchemist
+  68:  [5, 4],        // Ancient Apparition
+  1:   [1],           // Anti-Mage
+  113: [1, 2],        // Arc Warden
+  2:   [3, 4],        // Axe
+  3:   [5, 4],        // Bane
+  65:  [3, 4],        // Batrider
+  38:  [3],           // Beastmaster
+  4:   [3, 1],        // Bloodseeker
+  62:  [4],           // Bounty Hunter
+  78:  [3, 2],        // Brewmaster
+  99:  [3, 1],        // Bristleback
+  61:  [1, 3],        // Broodmother
+  96:  [3, 1],        // Centaur Warrunner
+  81:  [1, 3],        // Chaos Knight
+  66:  [4, 5],        // Chen
+  56:  [1, 2],        // Clinkz
+  51:  [3, 4],        // Clockwerk
+  5:   [5, 4],        // Crystal Maiden
+  55:  [3],           // Dark Seer
+  119: [4, 5],        // Dark Willow
+  135: [3, 2],        // Dawnbreaker
+  50:  [5, 4],        // Dazzle
+  43:  [2, 3],        // Death Prophet
+  87:  [5, 4],        // Disruptor
+  69:  [3, 2],        // Doom
+  49:  [2, 3],        // Dragon Knight
+  6:   [1],           // Drow Ranger
+  107: [4, 3],        // Earth Spirit
+  7:   [4, 5, 3],     // Earthshaker
+  103: [3, 4],        // Elder Titan
+  106: [2, 1],        // Ember Spirit
+  58:  [4, 5],        // Enchantress
+  33:  [3, 5],        // Enigma
+  41:  [1],           // Faceless Void
+  121: [4, 5],        // Grimstroke
+  72:  [1, 4],        // Gyrocopter
+  123: [4, 5],        // Hoodwink
+  59:  [1, 2],        // Huskar
+  74:  [2, 1],        // Invoker
+  91:  [5, 4],        // Io
+  64:  [5, 4],        // Jakiro
+  8:   [1],           // Juggernaut
+  90:  [4, 5],        // Keeper of the Light
+  145: [1, 2],        // Kez
+  23:  [3, 2, 4],     // Kunkka
+  155: [5],           // Largo
+  104: [3, 1, 4],     // Legion Commander
+  52:  [3, 2],        // Leshrac
+  31:  [5],           // Lich
+  54:  [1, 3],        // Lifestealer
+  25:  [4, 2],        // Lina
+  26:  [5, 4],        // Lion
+  80:  [1],           // Lone Druid
+  48:  [1],           // Luna
+  77:  [1, 3],        // Lycan
+  97:  [3, 4, 2],     // Magnus
+  136: [4, 3],        // Marci
+  129: [3],           // Mars
+  94:  [1],           // Medusa
+  82:  [2, 1],        // Meepo
+  9:   [4, 2],        // Mirana
+  114: [1, 4],        // Monkey King
+  10:  [1, 2],        // Morphling
+  138: [1, 2],        // Muerta
+  89:  [1, 5],        // Naga Siren
+  53:  [3, 4, 1, 2],  // Nature's Prophet (flex god)
+  36:  [3, 2],        // Necrophos
+  60:  [3, 1],        // Night Stalker
+  88:  [4],           // Nyx Assassin
+  84:  [4, 5],        // Ogre Magi
+  57:  [5, 1, 3],     // Omniknight
+  111: [5, 4],        // Oracle
+  76:  [2, 1],        // Outworld Devourer
+  120: [3, 4],        // Pangolier
+  44:  [1],           // Phantom Assassin
+  12:  [1],           // Phantom Lancer
+  110: [4, 5, 3],     // Phoenix
+  137: [3],           // Primal Beast
+  13:  [2],           // Puck
+  14:  [4, 5, 3],     // Pudge
+  45:  [2, 5],        // Pugna
+  39:  [2, 4],        // Queen of Pain
+  15:  [2, 3],        // Razor
+  32:  [4, 1],        // Riki
+  131: [4, 5],        // Ring Master
+  86:  [4, 5],        // Rubick
+  16:  [4, 3],        // Sand King
+  79:  [4, 5],        // Shadow Demon
+  11:  [2],           // Shadow Fiend
+  27:  [5, 4],        // Shadow Shaman
+  75:  [5, 2],        // Silencer
+  101: [4, 5],        // Skywrath Mage
+  28:  [3, 4],        // Slardar
+  93:  [1],           // Slark
+  128: [4, 5],        // Snapfire
+  35:  [1, 2],        // Sniper
+  67:  [1],           // Spectre
+  71:  [4, 3],        // Spirit Breaker
+  17:  [2],           // Storm Spirit
+  18:  [1, 3],        // Sven
+  105: [4, 5],        // Techies
+  46:  [2, 1],        // Templar Assassin
+  109: [1],           // Terrorblade
+  29:  [3],           // Tidehunter
+  98:  [3],           // Timbersaw
+  34:  [2],           // Tinker
+  19:  [4, 1, 3],     // Tiny
+  83:  [5],           // Treant Protector
+  95:  [1],           // Troll Warlord
+  100: [3, 4],        // Tusk
+  108: [3],           // Underlord
+  85:  [5, 3],        // Undying
+  70:  [1],           // Ursa
+  20:  [4, 5],        // Vengeful Spirit
+  40:  [3, 4],        // Venomancer
+  47:  [3, 2],        // Viper
+  92:  [3, 4],        // Visage
+  126: [2],           // Void Spirit
+  37:  [5],           // Warlock
+  63:  [1, 4],        // Weaver
+  21:  [4, 2, 5],     // Windranger
+  112: [5],           // Winter Wyvern
+  30:  [4, 5],        // Witch Doctor
+  42:  [1, 3],        // Wraith King
+  22:  [2, 4],        // Zeus
 };
+
+// Position rank decay: 1st=primary 1.0, 2nd=secondary 0.7, etc.
+const POSITION_RANK_DECAY = [1.0, 0.7, 0.5, 0.35];
+
+// Minimum sample size for OpenDota matchup data to be considered statistically meaningful.
+const MATCHUP_MIN_GAMES = 50;
 
 // Scoring weights — when enemies are picked, counter matters more
 const SCORE_WEIGHTS_NO_ENEMIES = {
@@ -63,6 +195,7 @@ const state = {
   searchQuery: '',
   attrFilter: 'all',
   loading: true,
+  lastRecs: [],         // cached recommendations for modal lookup
 };
 
 // ============================================================
@@ -209,57 +342,72 @@ async function loadMatchupsForPicks() {
 // ============================================================
 
 function computePositionFit(hero, position) {
-  const weights = POSITION_ROLE_WEIGHTS[position];
-  if (!weights) return 0;
+  const positions = HERO_POSITIONS[hero.id];
+  if (!positions || !positions.includes(position)) return 0;
+  const idx = positions.indexOf(position);
+  return POSITION_RANK_DECAY[idx] ?? 0.2;
+}
 
-  let score = 0;
-  let maxPossible = 0;
-  for (const [role, weight] of Object.entries(weights)) {
-    maxPossible += weight;
-    if (hero.roles.includes(role)) {
-      score += weight;
-    }
-  }
-
-  return maxPossible > 0 ? score / maxPossible : 0;
+function getPositionRank(heroId, position) {
+  const positions = HERO_POSITIONS[heroId];
+  if (!positions) return null;
+  const idx = positions.indexOf(position);
+  if (idx < 0) return null;
+  return idx === 0 ? 'primary' : 'flex';
 }
 
 function computeCounterScore(heroId, enemies) {
-  if (enemies.length === 0) return 0;
+  const breakdown = computeCounterBreakdown(heroId, enemies);
+  return breakdown.score;
+}
+
+function computeCounterBreakdown(heroId, enemies) {
+  if (enemies.length === 0) return { score: 0, perEnemy: [] };
 
   let totalAdvantage = 0;
   let count = 0;
+  const perEnemy = [];
 
   for (const enemyId of enemies) {
     const enemyMatchups = state.matchupCache[enemyId]?.data;
-    if (!enemyMatchups || !enemyMatchups[heroId]) continue;
+    const enemy = state.heroMap[enemyId];
+    const entry = { enemy, advantage: null, games: 0 };
+    if (!enemyMatchups || !enemyMatchups[heroId]) {
+      perEnemy.push(entry);
+      continue;
+    }
 
     const m = enemyMatchups[heroId];
-    if (m.games < 10) continue; // Need enough data
+    entry.games = m.games;
+    if (m.games < MATCHUP_MIN_GAMES) {
+      perEnemy.push(entry);
+      continue;
+    }
 
-    // Enemy's winrate against our hero candidate
-    // If enemy has LOW winrate vs us, that's good (we counter them)
-    const enemyWr = m.winrate;
-    const ourAdvantage = 0.5 - enemyWr; // positive = we counter them
+    // If enemy's WR vs us is LOW, we counter them (positive advantage)
+    const ourAdvantage = 0.5 - m.winrate;
+    entry.advantage = ourAdvantage;
     totalAdvantage += ourAdvantage;
     count++;
+    perEnemy.push(entry);
   }
 
-  return count > 0 ? totalAdvantage / count : 0;
+  return {
+    score: count > 0 ? totalAdvantage / count : 0,
+    perEnemy,
+    samples: count,
+  };
 }
 
 function computeSynergyScore(heroId, allies) {
-  if (allies.length === 0) return 0;
+  return computeSynergyBreakdown(heroId, allies).score;
+}
 
-  let totalSynergy = 0;
-  let count = 0;
+function computeSynergyBreakdown(heroId, allies) {
+  if (allies.length === 0) return { score: 0, newRoles: [], allRoles: [] };
 
-  // For synergy, we use the candidate hero's matchup data.
-  // If ally hero often appears against the same enemies and both win,
-  // that's a rough proxy for synergy.
-  // Simpler approach: use role diversity as synergy indicator
   const hero = state.heroMap[heroId];
-  if (!hero) return 0;
+  if (!hero) return { score: 0, newRoles: [], allRoles: [] };
 
   const allyRoles = new Set();
   allies.forEach(aId => {
@@ -267,27 +415,13 @@ function computeSynergyScore(heroId, allies) {
     if (ally) ally.roles.forEach(r => allyRoles.add(r));
   });
 
-  // Bonus for bringing roles the team doesn't have
   const newRoles = hero.roles.filter(r => !allyRoles.has(r));
   const roleDiversityBonus = newRoles.length * 0.05;
-
-  // Also check matchup-based synergy (if we have ally matchup data)
-  for (const allyId of allies) {
-    const allyMatchups = state.matchupCache[allyId]?.data;
-    if (!allyMatchups || !allyMatchups[heroId]) continue;
-
-    const m = allyMatchups[heroId];
-    if (m.games < 10) continue;
-
-    // This is how the ally performs AGAINST our candidate
-    // If ally has a HIGH winrate when facing this hero as opponent,
-    // it doesn't directly indicate synergy.
-    // But if the matchup is close to 50%, they're neutral.
-    // For synergy, we'd need "with" data which isn't available directly.
-    // Skip this for now and rely on role diversity.
-  }
-
-  return Math.min(roleDiversityBonus, 0.3);
+  return {
+    score: Math.min(roleDiversityBonus, 0.3),
+    newRoles,
+    allRoles: hero.roles,
+  };
 }
 
 function computeRecommendations() {
@@ -296,11 +430,17 @@ function computeRecommendations() {
   const pickedIds = new Set([...state.allies, ...state.enemies]);
   const candidates = state.heroes.filter(h => !pickedIds.has(h.id));
 
-  const scored = candidates.map(hero => {
+  const eligibleCandidates = candidates.filter(
+    h => computePositionFit(h, state.selectedPosition) > 0
+  );
+
+  const scored = eligibleCandidates.map(hero => {
     const positionFit = computePositionFit(hero, state.selectedPosition);
     const baseWinrate = hero.winrate;
-    const counterScore = computeCounterScore(hero.id, state.enemies);
-    const synergyScore = computeSynergyScore(hero.id, state.allies);
+    const counterBreakdown = computeCounterBreakdown(hero.id, state.enemies);
+    const synergyBreakdown = computeSynergyBreakdown(hero.id, state.allies);
+    const counterScore = counterBreakdown.score;
+    const synergyScore = synergyBreakdown.score;
 
     // Normalize scores to 0-1 range
     const normalizedWr = (baseWinrate - 0.40) / 0.20; // 40%-60% → 0-1
@@ -308,17 +448,26 @@ function computeRecommendations() {
     const normalizedSynergy = synergyScore / 0.30; // 0-30% → 0-1
 
     const w = state.enemies.length > 0 ? SCORE_WEIGHTS_WITH_ENEMIES : SCORE_WEIGHTS_NO_ENEMIES;
+    const contributions = {
+      baseWinrate: w.baseWinrate * clamp(normalizedWr),
+      positionFit: w.positionFit * clamp(positionFit),
+      counterScore: w.counterScore * clamp(normalizedCounter),
+      synergyScore: w.synergyScore * clamp(normalizedSynergy),
+    };
     const finalScore =
-      w.baseWinrate * clamp(normalizedWr) +
-      w.positionFit * clamp(positionFit) +
-      w.counterScore * clamp(normalizedCounter) +
-      w.synergyScore * clamp(normalizedSynergy);
+      contributions.baseWinrate +
+      contributions.positionFit +
+      contributions.counterScore +
+      contributions.synergyScore;
 
     // Generate explanation tags
     const tags = [];
     tags.push({ type: 'wr', text: `WR ${(baseWinrate * 100).toFixed(1)}%` });
-    if (positionFit >= 0.5) {
+    const rank = getPositionRank(hero.id, state.selectedPosition);
+    if (rank === 'primary') {
       tags.push({ type: 'fit', text: `Pos ${state.selectedPosition}` });
+    } else if (rank === 'flex') {
+      tags.push({ type: 'fit-flex', text: `Pos ${state.selectedPosition} (flex)` });
     }
     if (state.enemies.length > 0 && Math.abs(counterScore) > 0.003) {
       const sign = counterScore > 0 ? '+' : '';
@@ -333,6 +482,16 @@ function computeRecommendations() {
       score: finalScore,
       tags,
       components: { positionFit, baseWinrate, counterScore, synergyScore },
+      breakdown: {
+        weights: w,
+        contributions,
+        counter: counterBreakdown,
+        synergy: synergyBreakdown,
+        positionRank: rank,
+        normalizedWr,
+        normalizedCounter,
+        normalizedSynergy,
+      },
     };
   });
 
@@ -436,10 +595,12 @@ function renderRecommendations() {
   if (!state.selectedPosition) {
     subtitle.textContent = 'Обери позицію для початку';
     grid.innerHTML = '<div class="rec-placeholder"><p>Обери свою позицію та додай героїв ворожої/союзної команди для отримання рекомендацій</p></div>';
+    state.lastRecs = [];
     return;
   }
 
   const recs = computeRecommendations();
+  state.lastRecs = recs;
 
   if (recs.length === 0) {
     subtitle.textContent = 'Немає даних';
@@ -475,13 +636,101 @@ function renderRecommendations() {
     `;
   }).join('');
 
-  // Click recommendation to add to allies
+  // Click recommendation to open detailed score breakdown
   grid.querySelectorAll('.rec-card').forEach(card => {
     card.addEventListener('click', () => {
       const heroId = parseInt(card.dataset.heroId);
-      showToast(`${state.heroMap[heroId].name} — рекомендований пік!`, 'info');
+      const rec = state.lastRecs.find(r => r.hero.id === heroId);
+      if (rec) showScoreModal(rec);
     });
   });
+}
+
+function showScoreModal(rec) {
+  const backdrop = document.getElementById('modalBackdrop');
+  const titleEl = document.getElementById('modalTitle');
+  const subtitleEl = document.getElementById('modalSubtitle');
+  const imgEl = document.getElementById('modalHeroImg');
+  const scoreEl = document.getElementById('modalScore');
+  const bodyEl = document.getElementById('modalBody');
+
+  const { hero, score, breakdown, components } = rec;
+  const { weights, contributions, counter, synergy, positionRank } = breakdown;
+  const posName = POSITIONS[state.selectedPosition].name;
+  const positions = HERO_POSITIONS[hero.id] || [];
+  const allPosNames = positions.map(p => `Pos ${p}`).join(' / ');
+
+  titleEl.textContent = hero.name;
+  subtitleEl.textContent = `${allPosNames || 'без даних'} — для тебе обрано Pos ${state.selectedPosition} (${posName})${positionRank ? `, ${positionRank === 'primary' ? 'основна' : 'флекс'}` : ''}`;
+  imgEl.src = hero.img;
+  imgEl.alt = hero.name;
+  scoreEl.firstChild ? (scoreEl.firstChild.nodeValue = (score * 100).toFixed(0)) : (scoreEl.textContent = (score * 100).toFixed(0));
+  scoreEl.innerHTML = `${(score * 100).toFixed(0)}`;
+
+  // Build the body HTML
+  const fmtPct = (v) => `${v >= 0 ? '+' : ''}${(v * 100).toFixed(1)}%`;
+  const fmtBar = (raw, max) => {
+    const ratio = max === 0 ? 0 : Math.max(0, Math.min(1, raw / max));
+    return `<div class="score-component-bar"><div class="score-component-bar-fill" style="transform: scaleX(${ratio})"></div></div>`;
+  };
+
+  const counterRows = counter.perEnemy && counter.perEnemy.length
+    ? counter.perEnemy.map(e => {
+        if (!e.enemy) return '';
+        if (e.advantage === null) {
+          return `<div class="score-detail"><span>vs ${e.enemy.name}</span><span>${e.games < MATCHUP_MIN_GAMES && e.games > 0 ? `мало даних (${e.games})` : 'дані відсутні'}</span></div>`;
+        }
+        const cls = e.advantage > 0 ? 'pos-val' : 'neg-val';
+        return `<div class="score-detail"><span>vs ${e.enemy.name}</span><span class="${cls}">${fmtPct(e.advantage)} (n=${e.games})</span></div>`;
+      }).join('')
+    : '';
+
+  const synergyRows = synergy.newRoles && synergy.newRoles.length
+    ? `<div class="score-detail"><span>Нові ролі для команди</span><span class="pos-val">${synergy.newRoles.join(', ')}</span></div>`
+    : (state.allies.length > 0 ? '<div class="score-detail"><span>Нові ролі</span><span>команда вже покриває всі ролі цього героя</span></div>' : '');
+
+  bodyEl.innerHTML = `
+    <div class="score-section-title">Внески у фінальний скор</div>
+    <div class="score-component">
+      <div class="score-component-label">Base WR</div>
+      ${fmtBar(contributions.baseWinrate, weights.baseWinrate)}
+      <div class="score-component-value">${(contributions.baseWinrate * 100).toFixed(1)}/${(weights.baseWinrate * 100).toFixed(0)}</div>
+    </div>
+    <div class="score-detail"><span>Загальний WR (Archon-Divine)</span><span>${(components.baseWinrate * 100).toFixed(2)}%</span></div>
+
+    <div class="score-component">
+      <div class="score-component-label">Position Fit</div>
+      ${fmtBar(contributions.positionFit, weights.positionFit)}
+      <div class="score-component-value">${(contributions.positionFit * 100).toFixed(1)}/${(weights.positionFit * 100).toFixed(0)}</div>
+    </div>
+    <div class="score-detail"><span>Грає на цій позиції</span><span class="pos-val">${positionRank === 'primary' ? 'основна' : 'флекс'} (${(components.positionFit * 100).toFixed(0)}%)</span></div>
+
+    <div class="score-component">
+      <div class="score-component-label">Counter Score</div>
+      ${fmtBar(contributions.counterScore, weights.counterScore || 0.0001)}
+      <div class="score-component-value">${(contributions.counterScore * 100).toFixed(1)}/${(weights.counterScore * 100).toFixed(0)}</div>
+    </div>
+    ${state.enemies.length === 0 ? '<div class="score-detail"><span>Counter</span><span>немає ворогів — не враховується</span></div>' : counterRows || '<div class="score-detail"><span>Counter</span><span>matchup-дані не завантажені</span></div>'}
+
+    <div class="score-component">
+      <div class="score-component-label">Synergy</div>
+      ${fmtBar(contributions.synergyScore, weights.synergyScore)}
+      <div class="score-component-value">${(contributions.synergyScore * 100).toFixed(1)}/${(weights.synergyScore * 100).toFixed(0)}</div>
+    </div>
+    ${synergyRows || '<div class="score-detail"><span>Synergy</span><span>немає союзників — не враховується</span></div>'}
+
+    <div class="score-section-title">Ваги цієї конфігурації</div>
+    <div class="score-detail"><span>Base WR</span><span>${(weights.baseWinrate * 100).toFixed(0)}%</span></div>
+    <div class="score-detail"><span>Position Fit</span><span>${(weights.positionFit * 100).toFixed(0)}%</span></div>
+    <div class="score-detail"><span>Counter</span><span>${(weights.counterScore * 100).toFixed(0)}%</span></div>
+    <div class="score-detail"><span>Synergy</span><span>${(weights.synergyScore * 100).toFixed(0)}%</span></div>
+  `;
+
+  backdrop.hidden = false;
+}
+
+function closeScoreModal() {
+  document.getElementById('modalBackdrop').hidden = true;
 }
 
 // ============================================================
@@ -628,8 +877,18 @@ function bindEvents() {
   // Reset
   document.getElementById('resetBtn').addEventListener('click', resetAll);
 
-  // Keyboard shortcut: 'q' to toggle mode, 'r' to reset
+  // Modal close
+  document.getElementById('modalClose').addEventListener('click', closeScoreModal);
+  document.getElementById('modalBackdrop').addEventListener('click', e => {
+    if (e.target.id === 'modalBackdrop') closeScoreModal();
+  });
+
+  // Keyboard shortcut: 'q' to toggle mode, 'r' to reset, 'Esc' to close modal
   document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') {
+      closeScoreModal();
+      return;
+    }
     if (e.target.tagName === 'INPUT') return;
     if (e.key === 'q') setAddMode(state.addMode === 'ally' ? 'enemy' : 'ally');
     if (e.key === 'r') resetAll();
