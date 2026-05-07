@@ -196,6 +196,7 @@ const state = {
   attrFilter: 'all',
   loading: true,
   lastRecs: [],         // cached recommendations for modal lookup
+  modelMode: 'm1',      // 'm1' (curated, default) | 'v7e' (gradient boosting)
 };
 
 // ============================================================
@@ -427,6 +428,11 @@ function computeSynergyBreakdown(heroId, allies) {
 function computeRecommendations() {
   if (!state.selectedPosition) return [];
 
+  // V7e model dispatch — uses STRATZ data + GBM trees for ranking.
+  if (state.modelMode === 'v7e' && window.V7e && window.V7e.ready) {
+    return computeRecommendationsV7e();
+  }
+
   const pickedIds = new Set([...state.allies, ...state.enemies]);
   const candidates = state.heroes.filter(h => !pickedIds.has(h.id));
 
@@ -503,6 +509,59 @@ function computeRecommendations() {
 
 function clamp(v, min = 0, max = 1) {
   return Math.max(min, Math.min(max, v));
+}
+
+// ============================================================
+// V7e Model Recommendations
+// Uses STRATZ-derived data + Gradient Boosting trees.
+// ============================================================
+function computeRecommendationsV7e() {
+  const v7 = window.V7e;
+  const pos = state.selectedPosition;
+  const ranked = v7.rank(pos, state.allies, state.enemies);
+  const top = ranked.slice(0, TOP_RECOMMENDATIONS);
+
+  // Map V7e ranked entries to UI rec format compatible with score modal
+  return top.map(entry => {
+    const hero = state.heroMap[entry.heroId];
+    if (!hero) return null;
+    const elig = v7.eligibility[entry.heroId] || [];
+    const isPrimary = elig[0] === pos;
+    const tags = [];
+    const wrComp = entry.components.base_wr;
+    tags.push({ type: 'wr', text: `WR ${(wrComp * 100).toFixed(1)}%` });
+    if (isPrimary) tags.push({ type: 'fit', text: `Pos ${pos}` });
+    else tags.push({ type: 'fit-flex', text: `Pos ${pos} (flex)` });
+    if (state.enemies.length > 0) {
+      const advPct = (entry.components.vs_adv - 0.5) * 100;
+      if (Math.abs(advPct) >= 0.5) {
+        const sign = advPct >= 0 ? '+' : '';
+        tags.push({ type: 'counter', text: `vs ${sign}${advPct.toFixed(1)}%` });
+      }
+    }
+    if (state.allies.length > 0) {
+      const synPct = (entry.components.with_syn - 0.5) * 100;
+      if (synPct >= 0.5) tags.push({ type: 'synergy', text: `synergy +${synPct.toFixed(1)}%` });
+    }
+    tags.push({ type: 'model', text: 'V7e' });
+
+    return {
+      hero,
+      score: entry.score,
+      tags,
+      components: entry.components,
+      breakdown: {
+        model: 'v7e',
+        positionRank: isPrimary ? 'primary' : 'flex',
+        components: entry.components,
+        // For Why? modal compatibility:
+        weights: null,
+        contributions: null,
+        counter: null,
+        synergy: null,
+      },
+    };
+  }).filter(Boolean);
 }
 
 // ============================================================
@@ -655,17 +714,40 @@ function showScoreModal(rec) {
   const bodyEl = document.getElementById('modalBody');
 
   const { hero, score, breakdown, components } = rec;
-  const { weights, contributions, counter, synergy, positionRank } = breakdown;
   const posName = POSITIONS[state.selectedPosition].name;
-  const positions = HERO_POSITIONS[hero.id] || [];
-  const allPosNames = positions.map(p => `Pos ${p}`).join(' / ');
-
-  titleEl.textContent = hero.name;
-  subtitleEl.textContent = `${allPosNames || 'без даних'} — для тебе обрано Pos ${state.selectedPosition} (${posName})${positionRank ? `, ${positionRank === 'primary' ? 'основна' : 'флекс'}` : ''}`;
   imgEl.src = hero.img;
   imgEl.alt = hero.name;
-  scoreEl.firstChild ? (scoreEl.firstChild.nodeValue = (score * 100).toFixed(0)) : (scoreEl.textContent = (score * 100).toFixed(0));
+  titleEl.textContent = hero.name;
   scoreEl.innerHTML = `${(score * 100).toFixed(0)}`;
+
+  // V7e modal: shows feature contributions instead of weighted components
+  if (breakdown && breakdown.model === 'v7e') {
+    const c = components;
+    const elig = (window.V7e?.eligibility[hero.id]) || [];
+    const allPosNames = elig.map(p => `Pos ${p}`).join(' / ');
+    subtitleEl.textContent = `${allPosNames || 'без даних'} — обрано Pos ${state.selectedPosition} (${posName}), ${breakdown.positionRank === 'primary' ? 'основна' : 'флекс'}. Модель: V7e (GBM)`;
+    const advPct = (c.vs_adv - 0.5) * 100;
+    const synPct = (c.with_syn - 0.5) * 100;
+    bodyEl.innerHTML = `
+      <div class="score-section-title">Вхідні фічі моделі V7e</div>
+      <div class="score-detail"><span>Base WR (Pos ${state.selectedPosition}, Bayesian)</span><span>${(c.base_wr * 100).toFixed(2)}%</span></div>
+      <div class="score-detail"><span>Position Fit (rank ${elig.indexOf(state.selectedPosition) + 1}/${elig.length})</span><span>${(c.pos_fit * 100).toFixed(0)}%</span></div>
+      <div class="score-detail"><span>Counter Adv vs ворогів${state.enemies.length ? '' : ' (n/a)'}</span><span class="${advPct > 0 ? 'pos-val' : advPct < 0 ? 'neg-val' : ''}">${advPct > 0 ? '+' : ''}${advPct.toFixed(2)}%</span></div>
+      <div class="score-detail"><span>Synergy with союзниками${state.allies.length ? '' : ' (n/a)'}</span><span class="${synPct > 0 ? 'pos-val' : ''}">${synPct > 0 ? '+' : ''}${synPct.toFixed(2)}%</span></div>
+      <div class="score-detail"><span>Role Gap fill</span><span>${(c.role_gap * 100).toFixed(0)}%</span></div>
+
+      <div class="score-section-title">Як працює V7e</div>
+      <div class="score-detail-text">Gradient Boosting (200 дерев) натренований на 1381 Divine+ матчах: для кожного з 5 фіч модель будує дерево вирішень, фінальний скор — sigmoid від суми внесків дерев. CV top-10 = ${((window.V7e?.model?.trees?.length || 0) > 0 ? '52.7%' : 'n/a')}, що ~2.1× краще за M1 (24.6%).</div>
+    `;
+    backdrop.hidden = false;
+    return;
+  }
+
+  // M1 modal: original breakdown
+  const { weights, contributions, counter, synergy, positionRank } = breakdown;
+  const positions = HERO_POSITIONS[hero.id] || [];
+  const allPosNames = positions.map(p => `Pos ${p}`).join(' / ');
+  subtitleEl.textContent = `${allPosNames || 'без даних'} — для тебе обрано Pos ${state.selectedPosition} (${posName})${positionRank ? `, ${positionRank === 'primary' ? 'основна' : 'флекс'}` : ''}`;
 
   // Build the body HTML
   const fmtPct = (v) => `${v >= 0 ? '+' : ''}${(v * 100).toFixed(1)}%`;
@@ -876,6 +958,27 @@ function bindEvents() {
 
   // Reset
   document.getElementById('resetBtn').addEventListener('click', resetAll);
+
+  // Model selector
+  const modelSel = document.getElementById('modelSelect');
+  if (modelSel) {
+    modelSel.addEventListener('change', async e => {
+      const newMode = e.target.value;
+      if (newMode === 'v7e' && (!window.V7e || !window.V7e.ready)) {
+        showToast('Завантажую V7e дані…', 'info');
+        await window.V7e.init();
+        if (!window.V7e.ready) {
+          showToast('Не вдалося завантажити V7e', 'error');
+          modelSel.value = 'm1';
+          state.modelMode = 'm1';
+          return;
+        }
+      }
+      state.modelMode = newMode;
+      showToast(newMode === 'v7e' ? 'Перемкнено на V7e (GBM)' : 'Перемкнено на M1 (Curated)', 'info');
+      renderRecommendations();
+    });
+  }
 
   // Modal close
   document.getElementById('modalClose').addEventListener('click', closeScoreModal);

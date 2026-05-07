@@ -1,0 +1,19 @@
+{
+  "intercept": -2.3110703248265367,
+  "base_wr": 0.005072920817223598,
+  "pos_fit": 0.007574801908530562,
+  "with_syn": 0.0007950159169136271,
+  "vs_adv": 0.0010294141034592782,
+  "role_gap": 0.034615632625313704,
+  "n_train_samples": 75955,
+  "n_train_matches": 1381,
+  "feature_names": [
+    "base_wr",
+    "pos_fit",
+    "with_syn",
+    "vs_adv",
+    "role_gap"
+  ],
+  "cv_top10_mean": 0.24762072934651808,
+  "cv_top10_std": 0.03596056750618827
+}
