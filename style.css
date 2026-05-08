@@ -131,6 +131,35 @@ body {
 }
 .reset-btn:hover { border-color: var(--dire); color: var(--dire); }
 
+/* === Model Selector === */
+.header-right { display: flex; align-items: center; gap: 12px; }
+.model-selector {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+}
+.model-label { font-size: 0.78rem; color: var(--text-secondary); font-weight: 500; }
+.model-select {
+  background: transparent;
+  color: var(--text-primary);
+  border: none;
+  font-family: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+  outline: none;
+}
+.model-select option { background: var(--bg-secondary); color: var(--text-primary); }
+.score-detail-text {
+  font-size: 0.83rem;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  padding: 8px 0;
+}
+
 /* === Draft Area === */
 .draft-area {
   display: grid;

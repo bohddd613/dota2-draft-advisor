@@ -50,6 +50,13 @@
         </div>
       </div>
       <div class="header-right">
+        <div class="model-selector" title="Вибір алгоритму рекомендацій">
+          <span class="model-label">Модель:</span>
+          <select id="modelSelect" class="model-select">
+            <option value="m1" selected>M1 — Curated (V1, default)</option>
+            <option value="v7e">V7e — GBM (52% top10, beta)</option>
+          </select>
+        </div>
         <button class="reset-btn" id="resetBtn" title="Скинути все">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
             <path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
@@ -173,6 +180,7 @@
     </div>
   </div>
 
+  <script src="v7e.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

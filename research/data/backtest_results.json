@@ -1,0 +1,114 @@
+{
+  "win_prediction": [
+    {
+      "name": "M0_role_baseline",
+      "n": 500,
+      "accuracy": 0.464,
+      "log_loss": 0.7107532644115935,
+      "brier": 0.258619216917477,
+      "delta_mean": -0.0060397726328874106,
+      "delta_std": 0.2815195813969101
+    },
+    {
+      "name": "M1_curated_positions",
+      "n": 500,
+      "accuracy": 0.556,
+      "log_loss": 0.6848125717111836,
+      "brier": 0.24586477622813513,
+      "delta_mean": -0.015114878085802893,
+      "delta_std": 0.2529996163642555
+    },
+    {
+      "name": "M2_data_positions",
+      "n": 500,
+      "accuracy": 0.474,
+      "log_loss": 0.699800200334551,
+      "brier": 0.2532960112622324,
+      "delta_mean": 0.005742895881446134,
+      "delta_std": 0.20918238009269408
+    },
+    {
+      "name": "M3_true_synergy",
+      "n": 500,
+      "accuracy": 0.48,
+      "log_loss": 0.6999734234944072,
+      "brier": 0.253379625156085,
+      "delta_mean": 0.0060464328814461244,
+      "delta_std": 0.209932049795797
+    },
+    {
+      "name": "M4_role_gap",
+      "n": 500,
+      "accuracy": 0.476,
+      "log_loss": 0.7000550220568302,
+      "brier": 0.2534164650631888,
+      "delta_mean": 0.005786432881446149,
+      "delta_std": 0.21208118985517263
+    },
+    {
+      "name": "M5_logistic",
+      "n": 500,
+      "accuracy": 0.462,
+      "log_loss": 0.7575578801977412,
+      "brier": 0.27697414727152,
+      "delta_mean": 0.027604242558737675,
+      "delta_std": 0.6850466165770206
+    }
+  ],
+  "pick_recommendation": [
+    {
+      "name": "M0_role_baseline",
+      "n": 1000,
+      "mean_rank": 58.946,
+      "median_rank": 61.0,
+      "top1": 0.01,
+      "top5": 0.033,
+      "top10": 0.073
+    },
+    {
+      "name": "M1_curated_positions",
+      "n": 1000,
+      "mean_rank": 25.677,
+      "median_rank": 21.0,
+      "top1": 0.008,
+      "top5": 0.079,
+      "top10": 0.247
+    },
+    {
+      "name": "M2_data_positions",
+      "n": 1000,
+      "mean_rank": 20.302,
+      "median_rank": 17.0,
+      "top1": 0.023,
+      "top5": 0.129,
+      "top10": 0.316
+    },
+    {
+      "name": "M3_true_synergy",
+      "n": 1000,
+      "mean_rank": 20.293,
+      "median_rank": 17.0,
+      "top1": 0.027,
+      "top5": 0.139,
+      "top10": 0.317
+    },
+    {
+      "name": "M4_role_gap",
+      "n": 1000,
+      "mean_rank": 20.217,
+      "median_rank": 17.0,
+      "top1": 0.028,
+      "top5": 0.152,
+      "top10": 0.323
+    },
+    {
+      "name": "M5_logistic",
+      "n": 1000,
+      "mean_rank": 19.542,
+      "median_rank": 15.0,
+      "top1": 0.024,
+      "top5": 0.154,
+      "top10": 0.331
+    }
+  ]
+}
