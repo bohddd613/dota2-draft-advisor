@@ -196,7 +196,7 @@ const state = {
   attrFilter: 'all',
   loading: true,
   lastRecs: [],         // cached recommendations for modal lookup
-  modelMode: 'm1',      // 'm1' (curated, default) | 'v7e' (gradient boosting)
+  modelMode: 'm1',      // 'm1' (curated, default) | 'v7e' (gradient boosting) | 'm3' (TrueSynergy / R.O.S.H.)
 };
 
 // ============================================================
@@ -433,6 +433,11 @@ function computeRecommendations() {
     return computeRecommendationsV7e();
   }
 
+  // M3 dispatch — STRATZ R.O.S.H.-equivalent TrueSynergy formula.
+  if (state.modelMode === 'm3' && window.M3 && window.M3.ready) {
+    return computeRecommendationsM3();
+  }
+
   const pickedIds = new Set([...state.allies, ...state.enemies]);
   const candidates = state.heroes.filter(h => !pickedIds.has(h.id));
 
@@ -554,6 +559,61 @@ function computeRecommendationsV7e() {
         model: 'v7e',
         positionRank: isPrimary ? 'primary' : 'flex',
         components: entry.components,
+        // For Why? modal compatibility:
+        weights: null,
+        contributions: null,
+        counter: null,
+        synergy: null,
+      },
+    };
+  }).filter(Boolean);
+}
+
+// ============================================================
+// M3 — STRATZ R.O.S.H. TrueSynergy
+// Pure additive formula:
+//   TS(h) = (winrate@pos − 50) + Σ synergy(h, ally) + Σ counter(h, enemy)
+// All values in percentage points. No model training required.
+// ============================================================
+function computeRecommendationsM3() {
+  const m3 = window.M3;
+  const pos = state.selectedPosition;
+  const ranked = m3.rank(pos, state.allies, state.enemies);
+  const top = ranked.slice(0, TOP_RECOMMENDATIONS);
+
+  return top.map(entry => {
+    const hero = state.heroMap[entry.heroId];
+    if (!hero) return null;
+
+    const tags = [];
+    tags.push({ type: 'wr', text: `WR ${entry.baseWinrate.toFixed(1)}%` });
+    tags.push({ type: 'fit', text: `Pos ${pos}` });
+
+    if (state.allies.length > 0 && entry.synergyTotal !== 0) {
+      const sign = entry.synergyTotal >= 0 ? '+' : '';
+      tags.push({ type: 'synergy', text: `synergy ${sign}${entry.synergyTotal.toFixed(1)}` });
+    }
+    if (state.enemies.length > 0 && entry.counterTotal !== 0) {
+      const sign = entry.counterTotal >= 0 ? '+' : '';
+      tags.push({ type: 'counter', text: `vs ${sign}${entry.counterTotal.toFixed(1)}` });
+    }
+    tags.push({ type: 'ts', text: `TS ${entry.trueSynergy >= 0 ? '+' : ''}${entry.trueSynergy.toFixed(1)}` });
+    tags.push({ type: 'model', text: 'M3' });
+
+    return {
+      hero,
+      score: entry.scoreNormalized, // 0..1 sigmoid-mapped TS for UI consistency
+      tags,
+      components: entry,
+      breakdown: {
+        model: 'm3',
+        trueSynergy: entry.trueSynergy,
+        baseWinrate: entry.baseWinrate,
+        baseAdvantage: entry.baseAdvantage,
+        synergyTotal: entry.synergyTotal,
+        counterTotal: entry.counterTotal,
+        synergyPerAlly: entry.synergyPerAlly,
+        counterPerEnemy: entry.counterPerEnemy,
         // For Why? modal compatibility:
         weights: null,
         contributions: null,
@@ -719,6 +779,54 @@ function showScoreModal(rec) {
   imgEl.alt = hero.name;
   titleEl.textContent = hero.name;
   scoreEl.innerHTML = `${(score * 100).toFixed(0)}`;
+
+  // M3 modal: ROSH-style additive breakdown (base WR + per-ally synergy + per-enemy counter).
+  if (breakdown && breakdown.model === 'm3') {
+    subtitleEl.textContent = `Pos ${state.selectedPosition} (${posName}) — Модель: M3 (TrueSynergy)`;
+    const fmtPP = v => `${v >= 0 ? '+' : ''}${v.toFixed(2)} pp`;
+
+    const allyName = id => (state.heroMap[id] || {}).name || `#${id}`;
+    const enemyName = id => (state.heroMap[id] || {}).name || `#${id}`;
+
+    const synergyRowsHtml = breakdown.synergyPerAlly.length
+      ? breakdown.synergyPerAlly.map(s => {
+          if (!s.qualified) {
+            return `<div class="score-detail"><span>+ з ${allyName(s.heroId)}</span><span>${s.games > 0 ? `мало даних (${s.games})` : 'дані відсутні'}</span></div>`;
+          }
+          const cls = s.value > 0 ? 'pos-val' : s.value < 0 ? 'neg-val' : '';
+          return `<div class="score-detail"><span>+ з ${allyName(s.heroId)}</span><span class="${cls}">${fmtPP(s.value)} (n=${s.games})</span></div>`;
+        }).join('')
+      : '<div class="score-detail"><span>Синергії</span><span>немає союзників</span></div>';
+
+    const counterRowsHtml = breakdown.counterPerEnemy.length
+      ? breakdown.counterPerEnemy.map(c => {
+          if (!c.qualified) {
+            return `<div class="score-detail"><span>+ vs ${enemyName(c.heroId)}</span><span>${c.games > 0 ? `мало даних (${c.games})` : 'дані відсутні'}</span></div>`;
+          }
+          const cls = c.value > 0 ? 'pos-val' : c.value < 0 ? 'neg-val' : '';
+          return `<div class="score-detail"><span>+ vs ${enemyName(c.heroId)}</span><span class="${cls}">${fmtPP(c.value)} (n=${c.games})</span></div>`;
+        }).join('')
+      : '<div class="score-detail"><span>Каунтери</span><span>немає ворогів</span></div>';
+
+    bodyEl.innerHTML = `
+      <div class="score-section-title">Розбивка TrueSynergy</div>
+      <div class="score-detail"><span>Base WR на Pos ${state.selectedPosition}</span><span>${breakdown.baseWinrate.toFixed(2)}% (${fmtPP(breakdown.baseAdvantage)})</span></div>
+      <div class="score-detail"><span>Сумарна синергія з союзниками</span><span class="${breakdown.synergyTotal > 0 ? 'pos-val' : breakdown.synergyTotal < 0 ? 'neg-val' : ''}">${fmtPP(breakdown.synergyTotal)}</span></div>
+      <div class="score-detail"><span>Сумарний counter проти ворогів</span><span class="${breakdown.counterTotal > 0 ? 'pos-val' : breakdown.counterTotal < 0 ? 'neg-val' : ''}">${fmtPP(breakdown.counterTotal)}</span></div>
+      <div class="score-detail" style="font-weight:700"><span>TrueSynergy (TS)</span><span class="${breakdown.trueSynergy > 0 ? 'pos-val' : 'neg-val'}">${fmtPP(breakdown.trueSynergy)}</span></div>
+
+      <div class="score-section-title">Per-ally synergy</div>
+      ${synergyRowsHtml}
+
+      <div class="score-section-title">Per-enemy counter</div>
+      ${counterRowsHtml}
+
+      <div class="score-section-title">Як працює M3</div>
+      <div class="score-detail-text">M3 — точна реалізація R.O.S.H.-формули від STRATZ: <code>TS = (winrate@pos − 50) + Σ синергія з союзниками + Σ counter проти ворогів</code>. Немає тренованих ваг — лише публічні STRATZ-дані Divine+. Score (відображається як %) — sigmoid від TS для зручності перегляду.</div>
+    `;
+    backdrop.hidden = false;
+    return;
+  }
 
   // V7e modal: shows feature contributions instead of weighted components
   if (breakdown && breakdown.model === 'v7e') {
@@ -974,8 +1082,19 @@ function bindEvents() {
           return;
         }
       }
+      if (newMode === 'm3' && (!window.M3 || !window.M3.ready)) {
+        showToast('Завантажую M3 дані…', 'info');
+        await window.M3.init();
+        if (!window.M3.ready) {
+          showToast('Не вдалося завантажити M3', 'error');
+          modelSel.value = 'm1';
+          state.modelMode = 'm1';
+          return;
+        }
+      }
       state.modelMode = newMode;
-      showToast(newMode === 'v7e' ? 'Перемкнено на V7e (GBM)' : 'Перемкнено на M1 (Curated)', 'info');
+      const labels = { m1: 'Перемкнено на M1 (Curated)', v7e: 'Перемкнено на V7e (GBM)', m3: 'Перемкнено на M3 (TrueSynergy / R.O.S.H.)' };
+      showToast(labels[newMode] || `Перемкнено на ${newMode}`, 'info');
       renderRecommendations();
     });
   }
