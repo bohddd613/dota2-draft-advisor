@@ -210,7 +210,7 @@ class ApiClient {
     this.cache = {};
   }
 
-  async fetch(endpoint, retries = 3) {
+  async fetch(endpoint, retries = 2, timeoutMs = 8000) {
     const url = `${this.baseUrl}${endpoint}`;
     const cached = this.cache[url];
     if (cached && Date.now() - cached.ts < this.cacheTtl) {
@@ -221,7 +221,7 @@ class ApiClient {
     for (let i = 0; i < retries; i++) {
       try {
         const resp = await fetch(url, {
-          signal: AbortSignal.timeout(15000),
+          signal: AbortSignal.timeout(timeoutMs),
         });
         if (resp.status === 429) {
           // Rate limited — wait and retry
@@ -234,7 +234,7 @@ class ApiClient {
         return data;
       } catch (err) {
         lastError = err;
-        if (i < retries - 1) await sleep(1000 * (i + 1));
+        if (i < retries - 1) await sleep(800 * (i + 1));
       }
     }
     throw lastError;
@@ -252,6 +252,7 @@ function sleep(ms) {
 // ============================================================
 
 async function loadHeroes() {
+  // Try OpenDota first (fresh winrate data); fall back to cached files if it fails.
   try {
     const heroStats = await api.fetch('/heroStats');
     state.heroes = heroStats
@@ -278,7 +279,58 @@ async function loadHeroes() {
 
     return true;
   } catch (err) {
-    showToast(`Помилка завантаження героїв: ${err.message}`, 'error');
+    console.warn('[loadHeroes] OpenDota failed, using cached fallback:', err);
+    showToast('OpenDota недоступний — використовую кешовані STRATZ-дані', 'info');
+    return await loadHeroesFromCache();
+  }
+}
+
+/**
+ * Fallback: build the hero list from `data/heroes_v2.json` + `data/position_stats.json`
+ * (already shipped with V7e/M3). Lets the app function fully when OpenDota is down.
+ */
+async function loadHeroesFromCache() {
+  try {
+    const [heroesV2, posStats] = await Promise.all([
+      fetch('./data/heroes_v2.json').then(r => r.json()),
+      fetch('./data/position_stats.json').then(r => r.json()),
+    ]);
+
+    // Aggregate winrate + picks from position_stats (sum across all 5 positions).
+    const totalsByHero = {};
+    for (const rows of Object.values(posStats)) {
+      for (const r of rows) {
+        const t = totalsByHero[r.heroId] || { wins: 0, picks: 0 };
+        t.wins += r.winCount;
+        t.picks += r.matchCount;
+        totalsByHero[r.heroId] = t;
+      }
+    }
+
+    state.heroes = heroesV2.map(h => {
+      const t = totalsByHero[h.id] || { wins: 0, picks: 0 };
+      return {
+        id: h.id,
+        name: h.displayName,
+        internalName: h.shortName,
+        attr: h.primaryAttribute === 'all' ? 'all' : h.primaryAttribute,
+        attackType: 'Melee',
+        roles: h.roles || [],
+        img: `${CDN_BASE}/apps/dota2/images/dota_react/heroes/${h.shortName}.png`,
+        icon: `${CDN_BASE}/apps/dota2/images/dota_react/heroes/icons/${h.shortName}.png`,
+        winrate: t.picks > 0 ? t.wins / t.picks : 0.5,
+        picks: t.picks,
+        proPick: 0,
+        proWin: 0,
+      };
+    });
+
+    state.heroes.sort((a, b) => a.name.localeCompare(b.name));
+    state.heroMap = {};
+    state.heroes.forEach(h => { state.heroMap[h.id] = h; });
+    return true;
+  } catch (err) {
+    showToast(`Помилка завантаження героїв (fallback): ${err.message}`, 'error');
     return false;
   }
 }
@@ -1130,9 +1182,11 @@ async function init() {
   const success = await loadHeroes();
   state.loading = false;
 
+  // Always re-render to remove the loading spinner — even on failure we render
+  // an empty/error state instead of leaving the spinner stuck forever.
+  renderHeroGrid();
+  renderTeamSlots();
   if (success) {
-    renderHeroGrid();
-    renderTeamSlots();
     renderRecommendations();
   }
 }
