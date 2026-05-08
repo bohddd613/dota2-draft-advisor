@@ -192,6 +192,7 @@ const state = {
   enemies: [],          // hero ids
   addMode: 'ally',      // 'ally' | 'enemy'
   matchupCache: {},     // hero_id -> { data, timestamp }
+  _matchupsBundle: null, // lazy-loaded fallback bundle from data/matchups.json
   searchQuery: '',
   attrFilter: 'all',
   loading: true,
@@ -328,6 +329,11 @@ async function loadHeroesFromCache() {
     state.heroes.sort((a, b) => a.name.localeCompare(b.name));
     state.heroMap = {};
     state.heroes.forEach(h => { state.heroMap[h.id] = h; });
+
+    // Proactively prefetch the matchup bundle so M1 doesn't wait on
+    // OpenDota timeouts when the user starts adding picks.
+    loadMatchupsBundleFromCache();
+
     return true;
   } catch (err) {
     showToast(`Помилка завантаження героїв (fallback): ${err.message}`, 'error');
@@ -372,9 +378,50 @@ async function loadMatchups(heroId) {
     state.matchupCache[heroId] = { data: matchupMap, timestamp: Date.now() };
     return matchupMap;
   } catch (err) {
-    console.warn(`Failed to load matchups for hero ${heroId}:`, err);
-    return null;
+    console.warn(`[loadMatchups] OpenDota failed for hero ${heroId}, using cached fallback:`, err);
+    const fallback = await loadMatchupsBundleFromCache();
+    return fallback ? fallback[heroId] || null : null;
   }
+}
+
+// Lazy-loaded full matchup bundle from data/matchups.json. One file holds
+// all hero-vs-hero data; fetched once and reused for every hero.
+let _matchupsBundlePromise = null;
+
+async function loadMatchupsBundleFromCache() {
+  if (state._matchupsBundle) return state._matchupsBundle;
+  if (_matchupsBundlePromise) return _matchupsBundlePromise;
+
+  _matchupsBundlePromise = (async () => {
+    try {
+      const raw = await fetch('./data/matchups.json').then(r => r.json());
+      // Convert {hid: {vs: [{id, m, w, s}], with: [...]}}
+      // → {hid: {oid: {games, wins, winrate}}} — the shape M1 expects.
+      const bundle = {};
+      const now = Date.now();
+      for (const [hidStr, mu] of Object.entries(raw)) {
+        const hid = Number(hidStr);
+        const m = {};
+        for (const e of mu.vs || []) {
+          m[e.id] = {
+            games: e.m,
+            wins: e.w,
+            winrate: e.m > 0 ? e.w / e.m : 0.5,
+          };
+        }
+        bundle[hid] = m;
+        // Pre-populate state.matchupCache so M1 reads it directly.
+        state.matchupCache[hid] = { data: m, timestamp: now };
+      }
+      state._matchupsBundle = bundle;
+      return bundle;
+    } catch (err) {
+      console.warn('[loadMatchupsBundleFromCache] failed to load fallback bundle:', err);
+      return null;
+    }
+  })();
+
+  return _matchupsBundlePromise;
 }
 
 async function loadMatchupsForPicks() {
