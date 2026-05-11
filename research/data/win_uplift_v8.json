@@ -1,0 +1,74 @@
+{
+  "V8": {
+    "n_winners": 2762,
+    "n_losers": 2762,
+    "metrics": {
+      "top1": {
+        "winners_aligned_rate": 0.19623461259956554,
+        "losers_aligned_rate": 0.166183924692252,
+        "uplift_pp": 3.005068790731355,
+        "ratio": 1.1808278867102397
+      },
+      "top5": {
+        "winners_aligned_rate": 0.444243301955105,
+        "losers_aligned_rate": 0.3750905141202028,
+        "uplift_pp": 6.915278783490219,
+        "ratio": 1.1843629343629343
+      },
+      "top10": {
+        "winners_aligned_rate": 0.611875452570601,
+        "losers_aligned_rate": 0.5492396813902969,
+        "uplift_pp": 6.263577118030417,
+        "ratio": 1.1140408701384312
+      }
+    }
+  },
+  "V7e": {
+    "n_winners": 2762,
+    "n_losers": 2762,
+    "metrics": {
+      "top1": {
+        "winners_aligned_rate": 0.17414916727009414,
+        "losers_aligned_rate": 0.16002896451846488,
+        "uplift_pp": 1.4120202751629258,
+        "ratio": 1.0882352941176472
+      },
+      "top5": {
+        "winners_aligned_rate": 0.39572773352643015,
+        "losers_aligned_rate": 0.36857349746560464,
+        "uplift_pp": 2.7154236060825507,
+        "ratio": 1.0736738703339883
+      },
+      "top10": {
+        "winners_aligned_rate": 0.5510499637943519,
+        "losers_aligned_rate": 0.5072411296162201,
+        "uplift_pp": 4.380883417813175,
+        "ratio": 1.086366880799429
+      }
+    }
+  },
+  "M3": {
+    "n_winners": 2762,
+    "n_losers": 2762,
+    "metrics": {
+      "top1": {
+        "winners_aligned_rate": 0.013396089790007242,
+        "losers_aligned_rate": 0.013396089790007242,
+        "uplift_pp": 0.0,
+        "ratio": 1.0
+      },
+      "top5": {
+        "winners_aligned_rate": 0.08218682114409848,
+        "losers_aligned_rate": 0.06879073135409124,
+        "uplift_pp": 1.339608979000724,
+        "ratio": 1.194736842105263
+      },
+      "top10": {
+        "winners_aligned_rate": 0.1774076755973932,
+        "losers_aligned_rate": 0.16944243301955106,
+        "uplift_pp": 0.7965242577842147,
+        "ratio": 1.047008547008547
+      }
+    }
+  }
+}

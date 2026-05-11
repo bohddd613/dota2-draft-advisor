@@ -53,8 +53,9 @@
         <div class="model-selector" title="Вибір алгоритму рекомендацій">
           <span class="model-label">Модель:</span>
           <select id="modelSelect" class="model-select">
-            <option value="m1" selected>M1 — Curated (V1, default)</option>
-            <option value="v7e">V7e — GBM (52% top10, beta)</option>
+            <option value="v8" selected>V8 — GBM++ (55% top10, default)</option>
+            <option value="v7e">V7e — GBM (48% top10, backup)</option>
+            <option value="m3">M3 — TrueSynergy (R.O.S.H. clone)</option>
           </select>
         </div>
         <button class="reset-btn" id="resetBtn" title="Скинути все">
@@ -181,6 +182,8 @@
   </div>
 
   <script src="v7e.js"></script>
+  <script src="m3.js"></script>
+  <script src="v8.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

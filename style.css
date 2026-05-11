@@ -526,6 +526,9 @@ body {
 .rec-tag.counter { background: var(--dire-bg); color: #f08080; }
 .rec-tag.synergy { background: var(--radiant-bg); color: var(--radiant); }
 .rec-tag.fit { background: var(--gold-bg); color: var(--gold); }
+.rec-tag.fit-flex { background: rgba(160, 160, 160, 0.18); color: #c8c8c8; }
+.rec-tag.model { background: rgba(120, 130, 200, 0.18); color: #b3c0ff; font-style: italic; }
+.rec-tag.ts { background: rgba(255, 200, 120, 0.18); color: #ffcf86; font-weight: 600; }
 
 .rec-score-bar {
   width: 50px;
