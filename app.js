@@ -197,7 +197,7 @@ const state = {
   attrFilter: 'all',
   loading: true,
   lastRecs: [],         // cached recommendations for modal lookup
-  modelMode: 'm1',      // 'm1' (curated, default) | 'v7e' (gradient boosting) | 'm3' (TrueSynergy / R.O.S.H.)
+  modelMode: 'v8',      // 'v8' (GBM++ default) | 'v7e' (GBM backup) | 'm3' (TrueSynergy backup)
 };
 
 // ============================================================
@@ -527,92 +527,92 @@ function computeSynergyBreakdown(heroId, allies) {
 function computeRecommendations() {
   if (!state.selectedPosition) return [];
 
-  // V7e model dispatch — uses STRATZ data + GBM trees for ranking.
+  // V8 model dispatch (default) — Phase A GBM: 25 features, per-position-pair,
+  // min/max/spread stats, auto-inferred ally/enemy positions.
+  if (state.modelMode === 'v8' && window.V8 && window.V8.ready) {
+    return computeRecommendationsV8();
+  }
+
+  // V7e model dispatch — backup; smaller 5-feature GBM trained on the same data.
   if (state.modelMode === 'v7e' && window.V7e && window.V7e.ready) {
     return computeRecommendationsV7e();
   }
 
-  // M3 dispatch — STRATZ R.O.S.H.-equivalent TrueSynergy formula.
+  // M3 dispatch — STRATZ R.O.S.H.-equivalent TrueSynergy formula (no training).
   if (state.modelMode === 'm3' && window.M3 && window.M3.ready) {
     return computeRecommendationsM3();
   }
 
-  const pickedIds = new Set([...state.allies, ...state.enemies]);
-  const candidates = state.heroes.filter(h => !pickedIds.has(h.id));
-
-  const eligibleCandidates = candidates.filter(
-    h => computePositionFit(h, state.selectedPosition) > 0
-  );
-
-  const scored = eligibleCandidates.map(hero => {
-    const positionFit = computePositionFit(hero, state.selectedPosition);
-    const baseWinrate = hero.winrate;
-    const counterBreakdown = computeCounterBreakdown(hero.id, state.enemies);
-    const synergyBreakdown = computeSynergyBreakdown(hero.id, state.allies);
-    const counterScore = counterBreakdown.score;
-    const synergyScore = synergyBreakdown.score;
-
-    // Normalize scores to 0-1 range
-    const normalizedWr = (baseWinrate - 0.40) / 0.20; // 40%-60% → 0-1
-    const normalizedCounter = (counterScore + 0.10) / 0.20; // -10% to +10% → 0-1
-    const normalizedSynergy = synergyScore / 0.30; // 0-30% → 0-1
-
-    const w = state.enemies.length > 0 ? SCORE_WEIGHTS_WITH_ENEMIES : SCORE_WEIGHTS_NO_ENEMIES;
-    const contributions = {
-      baseWinrate: w.baseWinrate * clamp(normalizedWr),
-      positionFit: w.positionFit * clamp(positionFit),
-      counterScore: w.counterScore * clamp(normalizedCounter),
-      synergyScore: w.synergyScore * clamp(normalizedSynergy),
-    };
-    const finalScore =
-      contributions.baseWinrate +
-      contributions.positionFit +
-      contributions.counterScore +
-      contributions.synergyScore;
-
-    // Generate explanation tags
-    const tags = [];
-    tags.push({ type: 'wr', text: `WR ${(baseWinrate * 100).toFixed(1)}%` });
-    const rank = getPositionRank(hero.id, state.selectedPosition);
-    if (rank === 'primary') {
-      tags.push({ type: 'fit', text: `Pos ${state.selectedPosition}` });
-    } else if (rank === 'flex') {
-      tags.push({ type: 'fit-flex', text: `Pos ${state.selectedPosition} (flex)` });
-    }
-    if (state.enemies.length > 0 && Math.abs(counterScore) > 0.003) {
-      const sign = counterScore > 0 ? '+' : '';
-      tags.push({ type: 'counter', text: `vs ворогів ${sign}${(counterScore * 100).toFixed(1)}%` });
-    }
-    if (synergyScore > 0.05 && state.allies.length > 0) {
-      tags.push({ type: 'synergy', text: 'Synergy' });
-    }
-
-    return {
-      hero,
-      score: finalScore,
-      tags,
-      components: { positionFit, baseWinrate, counterScore, synergyScore },
-      breakdown: {
-        weights: w,
-        contributions,
-        counter: counterBreakdown,
-        synergy: synergyBreakdown,
-        positionRank: rank,
-        normalizedWr,
-        normalizedCounter,
-        normalizedSynergy,
-      },
-    };
-  });
-
-  // Filter out heroes with very low position fit (unless no better options)
-  scored.sort((a, b) => b.score - a.score);
-
-  return scored.slice(0, TOP_RECOMMENDATIONS);
+  // No model is ready yet (initial load); empty list signals the UI to wait.
+  return [];
 }
 
 function clamp(v, min = 0, max = 1) {
   return Math.max(min, Math.min(max, v));
+}
+
+// ============================================================
+// V8 Model Recommendations (Phase A — default)
+// 25 features: per-position-pair synergy/counter, min/max/spread stats,
+// target one-hot, popularity, role-gap. Trained on 1381 Divine+ matches.
+// Auto-infers ally/enemy positions internally from STRATZ pos stats.
+// CV top-10: ~55.5% (vs V7e 48.2%, M3 16.7%).
+// ============================================================
+function computeRecommendationsV8() {
+  const v8 = window.V8;
+  const pos = state.selectedPosition;
+  const ranked = v8.rank(pos, state.allies, state.enemies);
+  const top = ranked.slice(0, TOP_RECOMMENDATIONS);
+
+  return top.map(entry => {
+    const hero = state.heroMap[entry.heroId];
+    if (!hero) return null;
+    const elig = v8.eligibility[entry.heroId] || [];
+    const isPrimary = elig[0] === pos;
+    const c = entry.components;
+
+    const tags = [];
+    tags.push({ type: 'wr', text: `WR ${(c.base_wr * 100).toFixed(1)}%` });
+    if (isPrimary) tags.push({ type: 'fit', text: `Pos ${pos}` });
+    else tags.push({ type: 'fit-flex', text: `Pos ${pos} (flex)` });
+
+    if (state.enemies.length > 0) {
+      const advPct = c.vs_adv_total * 100;
+      if (Math.abs(advPct) >= 0.5) {
+        const sign = advPct >= 0 ? '+' : '';
+        tags.push({ type: 'counter', text: `vs ${sign}${advPct.toFixed(1)}%` });
+      }
+    }
+    if (state.allies.length > 0) {
+      const synPct = c.with_syn_total * 100;
+      if (synPct >= 0.5) {
+        tags.push({ type: 'synergy', text: `synergy +${synPct.toFixed(1)}%` });
+      }
+    }
+    tags.push({ type: 'model', text: 'V8' });
+
+    return {
+      hero,
+      score: entry.score,
+      tags,
+      components: c,
+      breakdown: {
+        model: 'v8',
+        positionRank: isPrimary ? 'primary' : 'flex',
+        baseWr: c.base_wr,
+        withTotal: c.with_syn_total,
+        vsTotal: c.vs_adv_total,
+        withMax: c.with_max,
+        vsMax: c.vs_max,
+        roleGap: c.role_gap,
+        rawFeatures: c.features,
+        weights: null,
+        contributions: null,
+        counter: null,
+        synergy: null,
+      },
+    };
+  }).filter(Boolean);
 }
 
 // ============================================================
@@ -950,72 +950,54 @@ function showScoreModal(rec) {
     return;
   }
 
-  // M1 modal: original breakdown
-  const { weights, contributions, counter, synergy, positionRank } = breakdown;
-  const positions = HERO_POSITIONS[hero.id] || [];
-  const allPosNames = positions.map(p => `Pos ${p}`).join(' / ');
-  subtitleEl.textContent = `${allPosNames || 'без даних'} — для тебе обрано Pos ${state.selectedPosition} (${posName})${positionRank ? `, ${positionRank === 'primary' ? 'основна' : 'флекс'}` : ''}`;
+  // V8 modal: feature breakdown for the 25-feature GBM++ model
+  if (breakdown && breakdown.model === 'v8') {
+    const c = components;
+    const elig = (window.V8?.eligibility[hero.id]) || [];
+    const allPosNames = elig.map(p => `Pos ${p}`).join(' / ');
+    subtitleEl.textContent = `${allPosNames || 'без даних'} — обрано Pos ${state.selectedPosition} (${posName}), ${breakdown.positionRank === 'primary' ? 'основна' : 'флекс'}. Модель: V8 (GBM++ Phase A)`;
+    const withPct = c.with_syn_total * 100;
+    const vsPct = c.vs_adv_total * 100;
+    const wMaxPct = c.with_max * 100;
+    const vMaxPct = c.vs_max * 100;
 
-  // Build the body HTML
-  const fmtPct = (v) => `${v >= 0 ? '+' : ''}${(v * 100).toFixed(1)}%`;
-  const fmtBar = (raw, max) => {
-    const ratio = max === 0 ? 0 : Math.max(0, Math.min(1, raw / max));
-    return `<div class="score-component-bar"><div class="score-component-bar-fill" style="transform: scaleX(${ratio})"></div></div>`;
-  };
+    // Per-position rows
+    const f = c.features || [];
+    const withPos = [f[3], f[4], f[5], f[6], f[7]]; // per-position synergies
+    const vsPos = [f[8], f[9], f[10], f[11], f[12]]; // per-position counters
+    const withPosRows = withPos.map((v, i) =>
+      v !== 0
+        ? `<div class="score-detail"><span>з ally на Pos ${i + 1}</span><span class="${v > 0 ? 'pos-val' : 'neg-val'}">${v > 0 ? '+' : ''}${(v * 100).toFixed(2)}%</span></div>`
+        : ''
+    ).join('') || '<div class="score-detail"><span>—</span><span>немає синергійних даних</span></div>';
+    const vsPosRows = vsPos.map((v, i) =>
+      v !== 0
+        ? `<div class="score-detail"><span>vs enemy на Pos ${i + 1}</span><span class="${v > 0 ? 'pos-val' : 'neg-val'}">${v > 0 ? '+' : ''}${(v * 100).toFixed(2)}%</span></div>`
+        : ''
+    ).join('') || '<div class="score-detail"><span>—</span><span>немає counter-даних</span></div>';
 
-  const counterRows = counter.perEnemy && counter.perEnemy.length
-    ? counter.perEnemy.map(e => {
-        if (!e.enemy) return '';
-        if (e.advantage === null) {
-          return `<div class="score-detail"><span>vs ${e.enemy.name}</span><span>${e.games < MATCHUP_MIN_GAMES && e.games > 0 ? `мало даних (${e.games})` : 'дані відсутні'}</span></div>`;
-        }
-        const cls = e.advantage > 0 ? 'pos-val' : 'neg-val';
-        return `<div class="score-detail"><span>vs ${e.enemy.name}</span><span class="${cls}">${fmtPct(e.advantage)} (n=${e.games})</span></div>`;
-      }).join('')
-    : '';
+    bodyEl.innerHTML = `
+      <div class="score-section-title">Базові фічі V8</div>
+      <div class="score-detail"><span>Base WR (Pos ${state.selectedPosition}, Bayesian)</span><span>${(c.base_wr * 100).toFixed(2)}%</span></div>
+      <div class="score-detail"><span>Position Fit</span><span>${(c.pos_fit * 100).toFixed(0)}%</span></div>
+      <div class="score-detail"><span>Role Gap fill</span><span>${(c.role_gap * 100).toFixed(0)}%</span></div>
 
-  const synergyRows = synergy.newRoles && synergy.newRoles.length
-    ? `<div class="score-detail"><span>Нові ролі для команди</span><span class="pos-val">${synergy.newRoles.join(', ')}</span></div>`
-    : (state.allies.length > 0 ? '<div class="score-detail"><span>Нові ролі</span><span>команда вже покриває всі ролі цього героя</span></div>' : '');
+      <div class="score-section-title">Per-position синергія з союзниками</div>
+      ${state.allies.length === 0 ? '<div class="score-detail"><span>Синергія</span><span>немає союзників — не враховується</span></div>' : withPosRows}
+      <div class="score-detail"><span>Сума синергії</span><span class="${withPct > 0 ? 'pos-val' : ''}">${withPct >= 0 ? '+' : ''}${withPct.toFixed(2)}%</span></div>
+      <div class="score-detail"><span>Найкраща пара</span><span class="${wMaxPct > 0 ? 'pos-val' : ''}">${wMaxPct >= 0 ? '+' : ''}${wMaxPct.toFixed(2)}%</span></div>
 
-  bodyEl.innerHTML = `
-    <div class="score-section-title">Внески у фінальний скор</div>
-    <div class="score-component">
-      <div class="score-component-label">Base WR</div>
-      ${fmtBar(contributions.baseWinrate, weights.baseWinrate)}
-      <div class="score-component-value">${(contributions.baseWinrate * 100).toFixed(1)}/${(weights.baseWinrate * 100).toFixed(0)}</div>
-    </div>
-    <div class="score-detail"><span>Загальний WR (Archon-Divine)</span><span>${(components.baseWinrate * 100).toFixed(2)}%</span></div>
+      <div class="score-section-title">Per-position counter vs ворогів</div>
+      ${state.enemies.length === 0 ? '<div class="score-detail"><span>Counter</span><span>немає ворогів — не враховується</span></div>' : vsPosRows}
+      <div class="score-detail"><span>Сума counter</span><span class="${vsPct > 0 ? 'pos-val' : vsPct < 0 ? 'neg-val' : ''}">${vsPct >= 0 ? '+' : ''}${vsPct.toFixed(2)}%</span></div>
+      <div class="score-detail"><span>Найсильніший counter</span><span class="${vMaxPct > 0 ? 'pos-val' : ''}">${vMaxPct >= 0 ? '+' : ''}${vMaxPct.toFixed(2)}%</span></div>
 
-    <div class="score-component">
-      <div class="score-component-label">Position Fit</div>
-      ${fmtBar(contributions.positionFit, weights.positionFit)}
-      <div class="score-component-value">${(contributions.positionFit * 100).toFixed(1)}/${(weights.positionFit * 100).toFixed(0)}</div>
-    </div>
-    <div class="score-detail"><span>Грає на цій позиції</span><span class="pos-val">${positionRank === 'primary' ? 'основна' : 'флекс'} (${(components.positionFit * 100).toFixed(0)}%)</span></div>
-
-    <div class="score-component">
-      <div class="score-component-label">Counter Score</div>
-      ${fmtBar(contributions.counterScore, weights.counterScore || 0.0001)}
-      <div class="score-component-value">${(contributions.counterScore * 100).toFixed(1)}/${(weights.counterScore * 100).toFixed(0)}</div>
-    </div>
-    ${state.enemies.length === 0 ? '<div class="score-detail"><span>Counter</span><span>немає ворогів — не враховується</span></div>' : counterRows || '<div class="score-detail"><span>Counter</span><span>matchup-дані не завантажені</span></div>'}
-
-    <div class="score-component">
-      <div class="score-component-label">Synergy</div>
-      ${fmtBar(contributions.synergyScore, weights.synergyScore)}
-      <div class="score-component-value">${(contributions.synergyScore * 100).toFixed(1)}/${(weights.synergyScore * 100).toFixed(0)}</div>
-    </div>
-    ${synergyRows || '<div class="score-detail"><span>Synergy</span><span>немає союзників — не враховується</span></div>'}
-
-    <div class="score-section-title">Ваги цієї конфігурації</div>
-    <div class="score-detail"><span>Base WR</span><span>${(weights.baseWinrate * 100).toFixed(0)}%</span></div>
-    <div class="score-detail"><span>Position Fit</span><span>${(weights.positionFit * 100).toFixed(0)}%</span></div>
-    <div class="score-detail"><span>Counter</span><span>${(weights.counterScore * 100).toFixed(0)}%</span></div>
-    <div class="score-detail"><span>Synergy</span><span>${(weights.synergyScore * 100).toFixed(0)}%</span></div>
-  `;
-
-  backdrop.hidden = false;
+      <div class="score-section-title">Як працює V8 (Phase A)</div>
+      <div class="score-detail-text">Gradient Boosting на 300 деревах + 25 фічах: окремі синергії/counter по позиціях, min/max/spread статистики, one-hot цільової позиції. Натренована на 1381 Divine+ матчах. Позиції союзників/ворогів автоматично визначаються з кешу. CV top-10 = 55.5% (V7e 48.2%, M3 16.7%).</div>
+    `;
+    backdrop.hidden = false;
+    return;
+  }
 }
 
 function closeScoreModal() {
@@ -1171,13 +1153,23 @@ function bindEvents() {
   if (modelSel) {
     modelSel.addEventListener('change', async e => {
       const newMode = e.target.value;
+      const prevMode = state.modelMode;
+      // Lazy-load whichever model the user is switching to.
+      if (newMode === 'v8' && (!window.V8 || !window.V8.ready)) {
+        showToast('Завантажую V8 дані…', 'info');
+        await window.V8.init();
+        if (!window.V8.ready) {
+          showToast('Не вдалося завантажити V8', 'error');
+          modelSel.value = prevMode;
+          return;
+        }
+      }
       if (newMode === 'v7e' && (!window.V7e || !window.V7e.ready)) {
         showToast('Завантажую V7e дані…', 'info');
         await window.V7e.init();
         if (!window.V7e.ready) {
           showToast('Не вдалося завантажити V7e', 'error');
-          modelSel.value = 'm1';
-          state.modelMode = 'm1';
+          modelSel.value = prevMode;
           return;
         }
       }
@@ -1186,13 +1178,16 @@ function bindEvents() {
         await window.M3.init();
         if (!window.M3.ready) {
           showToast('Не вдалося завантажити M3', 'error');
-          modelSel.value = 'm1';
-          state.modelMode = 'm1';
+          modelSel.value = prevMode;
           return;
         }
       }
       state.modelMode = newMode;
-      const labels = { m1: 'Перемкнено на M1 (Curated)', v7e: 'Перемкнено на V7e (GBM)', m3: 'Перемкнено на M3 (TrueSynergy / R.O.S.H.)' };
+      const labels = {
+        v8: 'Перемкнено на V8 (GBM++, Phase A)',
+        v7e: 'Перемкнено на V7e (GBM)',
+        m3: 'Перемкнено на M3 (TrueSynergy / R.O.S.H.)',
+      };
       showToast(labels[newMode] || `Перемкнено на ${newMode}`, 'info');
       renderRecommendations();
     });
@@ -1226,7 +1221,11 @@ async function init() {
   state.loading = true;
   renderHeroGrid();
 
+  // Load hero data and V8 (default model) in parallel so the user can start
+  // drafting as soon as both are ready.
+  const v8InitPromise = (window.V8 && !window.V8.ready) ? window.V8.init() : Promise.resolve();
   const success = await loadHeroes();
+  await v8InitPromise;
   state.loading = false;
 
   // Always re-render to remove the loading spinner — even on failure we render
@@ -1235,6 +1234,20 @@ async function init() {
   renderTeamSlots();
   if (success) {
     renderRecommendations();
+  }
+
+  // If V8 failed to load (e.g. data fetch error), warn the user and fall back
+  // to V7e silently — model dropdown still lets them switch manually.
+  if (!window.V8 || !window.V8.ready) {
+    console.warn('[V8] not ready after init — falling back to V7e');
+    if (window.V7e && !window.V7e.ready) await window.V7e.init();
+    if (window.V7e?.ready) {
+      state.modelMode = 'v7e';
+      const sel = document.getElementById('modelSelect');
+      if (sel) sel.value = 'v7e';
+      showToast('V8 недоступний — перемкнено на V7e', 'info');
+      renderRecommendations();
+    }
   }
 }
 

@@ -7,3 +7,6 @@ research/data/matches_public_divine.json
 research/data/matches_stratz_enriched.json
 research/data/matchups_DIVINE_IMMORTAL.json
 research/data/*.joblib
+research/data/v8b_ranker.txt
+research/data/v8b_model.json
+test-plan-v7e.md
