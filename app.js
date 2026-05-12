@@ -197,7 +197,7 @@ const state = {
   attrFilter: 'all',
   loading: true,
   lastRecs: [],         // cached recommendations for modal lookup
-  modelMode: 'v8',      // 'v8' (GBM++ default) | 'v7e' (GBM backup) | 'm3' (TrueSynergy backup)
+  modelMode: 'v9',      // 'v9' (LGBM Ranker default) | 'v8' (GBM++ Phase A) | 'v7e' (GBM) | 'm3' (TrueSynergy)
 };
 
 // ============================================================
@@ -527,8 +527,14 @@ function computeSynergyBreakdown(heroId, allies) {
 function computeRecommendations() {
   if (!state.selectedPosition) return [];
 
-  // V8 model dispatch (default) — Phase A GBM: 25 features, per-position-pair,
-  // min/max/spread stats, auto-inferred ally/enemy positions.
+  // V9 dispatch (default) — Phase B LightGBM Ranker (lambdarank): 400 trees on
+  // 6282 Divine+ matches with pairwise ranking objective. Same 25 features as V8.
+  // Held-out top-10 = 74.0% (vs V8 61.9%, V7e 55.9%).
+  if (state.modelMode === 'v9' && window.V9 && window.V9.ready) {
+    return computeRecommendationsV9();
+  }
+
+  // V8 model dispatch — Phase A GBM: 25 features, sklearn GradientBoostingClassifier.
   if (state.modelMode === 'v8' && window.V8 && window.V8.ready) {
     return computeRecommendationsV8();
   }
@@ -552,7 +558,74 @@ function clamp(v, min = 0, max = 1) {
 }
 
 // ============================================================
-// V8 Model Recommendations (Phase A — default)
+// V9 Model Recommendations (Phase B — default)
+// LightGBM LGBMRanker (lambdarank) on 6282 Divine+ matches, 400 trees,
+// num_leaves=63, lr=0.05. Same 25 features as V8 (per-position-pair
+// synergy/counter, min/max/spread, target one-hot, popularity, role-gap),
+// but pairwise ranking objective unlocks signal that binary classification
+// could not extract.
+// Held-out backtest: top-10=74.0% (vs V8 61.9%, V7e 55.9%).
+// Win-uplift: +17.4pp top-10 winners vs losers (vs V8 +1.4pp).
+// ============================================================
+function computeRecommendationsV9() {
+  const v9 = window.V9;
+  const pos = state.selectedPosition;
+  const ranked = v9.rank(pos, state.allies, state.enemies);
+  const top = ranked.slice(0, TOP_RECOMMENDATIONS);
+
+  return top.map(entry => {
+    const hero = state.heroMap[entry.heroId];
+    if (!hero) return null;
+    const elig = v9.eligibility[entry.heroId] || [];
+    const isPrimary = elig[0] === pos;
+    const c = entry.components;
+
+    const tags = [];
+    tags.push({ type: 'wr', text: `WR ${(c.base_wr * 100).toFixed(1)}%` });
+    if (isPrimary) tags.push({ type: 'fit', text: `Pos ${pos}` });
+    else tags.push({ type: 'fit-flex', text: `Pos ${pos} (flex)` });
+
+    if (state.enemies.length > 0) {
+      const advPct = c.vs_adv_total * 100;
+      if (Math.abs(advPct) >= 0.5) {
+        const sign = advPct >= 0 ? '+' : '';
+        tags.push({ type: 'counter', text: `vs ${sign}${advPct.toFixed(1)}%` });
+      }
+    }
+    if (state.allies.length > 0) {
+      const synPct = c.with_syn_total * 100;
+      if (synPct >= 0.5) {
+        tags.push({ type: 'synergy', text: `synergy +${synPct.toFixed(1)}%` });
+      }
+    }
+    tags.push({ type: 'model', text: 'V9' });
+
+    return {
+      hero,
+      score: entry.score,
+      tags,
+      components: c,
+      breakdown: {
+        model: 'v9',
+        positionRank: isPrimary ? 'primary' : 'flex',
+        baseWr: c.base_wr,
+        withTotal: c.with_syn_total,
+        vsTotal: c.vs_adv_total,
+        withMax: c.with_max,
+        vsMax: c.vs_max,
+        roleGap: c.role_gap,
+        rawFeatures: c.features,
+        weights: null,
+        contributions: null,
+        counter: null,
+        synergy: null,
+      },
+    };
+  }).filter(Boolean);
+}
+
+// ============================================================
+// V8 Model Recommendations (Phase A)
 // 25 features: per-position-pair synergy/counter, min/max/spread stats,
 // target one-hot, popularity, role-gap. Trained on 1381 Divine+ matches.
 // Auto-infers ally/enemy positions internally from STRATZ pos stats.
@@ -950,12 +1023,15 @@ function showScoreModal(rec) {
     return;
   }
 
-  // V8 modal: feature breakdown for the 25-feature GBM++ model
-  if (breakdown && breakdown.model === 'v8') {
+  // V9/V8 modal: feature breakdown for the 25-feature pick-rec models
+  if (breakdown && (breakdown.model === 'v8' || breakdown.model === 'v9')) {
     const c = components;
-    const elig = (window.V8?.eligibility[hero.id]) || [];
+    const isV9 = breakdown.model === 'v9';
+    const modelObj = isV9 ? window.V9 : window.V8;
+    const modelLabel = isV9 ? 'V9 (LightGBM Ranker, Phase B)' : 'V8 (GBM++ Phase A)';
+    const elig = (modelObj?.eligibility[hero.id]) || [];
     const allPosNames = elig.map(p => `Pos ${p}`).join(' / ');
-    subtitleEl.textContent = `${allPosNames || 'без даних'} — обрано Pos ${state.selectedPosition} (${posName}), ${breakdown.positionRank === 'primary' ? 'основна' : 'флекс'}. Модель: V8 (GBM++ Phase A)`;
+    subtitleEl.textContent = `${allPosNames || 'без даних'} — обрано Pos ${state.selectedPosition} (${posName}), ${breakdown.positionRank === 'primary' ? 'основна' : 'флекс'}. Модель: ${modelLabel}`;
     const withPct = c.with_syn_total * 100;
     const vsPct = c.vs_adv_total * 100;
     const wMaxPct = c.with_max * 100;
@@ -977,7 +1053,7 @@ function showScoreModal(rec) {
     ).join('') || '<div class="score-detail"><span>—</span><span>немає counter-даних</span></div>';
 
     bodyEl.innerHTML = `
-      <div class="score-section-title">Базові фічі V8</div>
+      <div class="score-section-title">Базові фічі ${isV9 ? 'V9' : 'V8'}</div>
       <div class="score-detail"><span>Base WR (Pos ${state.selectedPosition}, Bayesian)</span><span>${(c.base_wr * 100).toFixed(2)}%</span></div>
       <div class="score-detail"><span>Position Fit</span><span>${(c.pos_fit * 100).toFixed(0)}%</span></div>
       <div class="score-detail"><span>Role Gap fill</span><span>${(c.role_gap * 100).toFixed(0)}%</span></div>
@@ -992,8 +1068,10 @@ function showScoreModal(rec) {
       <div class="score-detail"><span>Сума counter</span><span class="${vsPct > 0 ? 'pos-val' : vsPct < 0 ? 'neg-val' : ''}">${vsPct >= 0 ? '+' : ''}${vsPct.toFixed(2)}%</span></div>
       <div class="score-detail"><span>Найсильніший counter</span><span class="${vMaxPct > 0 ? 'pos-val' : ''}">${vMaxPct >= 0 ? '+' : ''}${vMaxPct.toFixed(2)}%</span></div>
 
-      <div class="score-section-title">Як працює V8 (Phase A)</div>
-      <div class="score-detail-text">Gradient Boosting на 300 деревах + 25 фічах: окремі синергії/counter по позиціях, min/max/spread статистики, one-hot цільової позиції. Натренована на 1381 Divine+ матчах. Позиції союзників/ворогів автоматично визначаються з кешу. CV top-10 = 55.5% (V7e 48.2%, M3 16.7%).</div>
+      <div class="score-section-title">${isV9 ? 'Як працює V9 (Phase B)' : 'Як працює V8 (Phase A)'}</div>
+      <div class="score-detail-text">${isV9
+        ? 'LightGBM LGBMRanker (pairwise lambdarank) на 400 деревах + 25 фічах: окремі синергії/counter по позиціях, min/max/spread статистики, one-hot цільової позиції. Натренована на 6282 Divine+ матчах через pairwise ranking — модель вчиться ставити справжній пік вище за випадковий, а не передбачає бінарне "пікнуто/ні". Held-out top-10 = 74.0% (V8 61.9%, V7e 55.9%). Win-uplift: +17pp winners vs losers.'
+        : 'Gradient Boosting на 300 деревах + 25 фічах: окремі синергії/counter по позиціях, min/max/spread статистики, one-hot цільової позиції. Натренована на 1381 Divine+ матчах. Позиції союзників/ворогів автоматично визначаються з кешу. CV top-10 = 55.5% (V7e 48.2%, M3 16.7%).'}</div>
     `;
     backdrop.hidden = false;
     return;
@@ -1155,6 +1233,15 @@ function bindEvents() {
       const newMode = e.target.value;
       const prevMode = state.modelMode;
       // Lazy-load whichever model the user is switching to.
+      if (newMode === 'v9' && (!window.V9 || !window.V9.ready)) {
+        showToast('Завантажую V9 дані…', 'info');
+        await window.V9.init();
+        if (!window.V9.ready) {
+          showToast('Не вдалося завантажити V9', 'error');
+          modelSel.value = prevMode;
+          return;
+        }
+      }
       if (newMode === 'v8' && (!window.V8 || !window.V8.ready)) {
         showToast('Завантажую V8 дані…', 'info');
         await window.V8.init();
@@ -1184,6 +1271,7 @@ function bindEvents() {
       }
       state.modelMode = newMode;
       const labels = {
+        v9: 'Перемкнено на V9 (LightGBM Ranker, Phase B)',
         v8: 'Перемкнено на V8 (GBM++, Phase A)',
         v7e: 'Перемкнено на V7e (GBM)',
         m3: 'Перемкнено на M3 (TrueSynergy / R.O.S.H.)',
@@ -1221,11 +1309,11 @@ async function init() {
   state.loading = true;
   renderHeroGrid();
 
-  // Load hero data and V8 (default model) in parallel so the user can start
+  // Load hero data and V9 (default model) in parallel so the user can start
   // drafting as soon as both are ready.
-  const v8InitPromise = (window.V8 && !window.V8.ready) ? window.V8.init() : Promise.resolve();
+  const v9InitPromise = (window.V9 && !window.V9.ready) ? window.V9.init() : Promise.resolve();
   const success = await loadHeroes();
-  await v8InitPromise;
+  await v9InitPromise;
   state.loading = false;
 
   // Always re-render to remove the loading spinner — even on failure we render
@@ -1236,17 +1324,25 @@ async function init() {
     renderRecommendations();
   }
 
-  // If V8 failed to load (e.g. data fetch error), warn the user and fall back
-  // to V7e silently — model dropdown still lets them switch manually.
-  if (!window.V8 || !window.V8.ready) {
-    console.warn('[V8] not ready after init — falling back to V7e');
-    if (window.V7e && !window.V7e.ready) await window.V7e.init();
-    if (window.V7e?.ready) {
-      state.modelMode = 'v7e';
+  // If V9 failed to load, fall back to V8, then V7e (in order of preference).
+  if (!window.V9 || !window.V9.ready) {
+    console.warn('[V9] not ready after init — falling back to V8');
+    if (window.V8 && !window.V8.ready) await window.V8.init();
+    if (window.V8?.ready) {
+      state.modelMode = 'v8';
       const sel = document.getElementById('modelSelect');
-      if (sel) sel.value = 'v7e';
-      showToast('V8 недоступний — перемкнено на V7e', 'info');
+      if (sel) sel.value = 'v8';
+      showToast('V9 недоступний — перемкнено на V8', 'info');
       renderRecommendations();
+    } else {
+      if (window.V7e && !window.V7e.ready) await window.V7e.init();
+      if (window.V7e?.ready) {
+        state.modelMode = 'v7e';
+        const sel = document.getElementById('modelSelect');
+        if (sel) sel.value = 'v7e';
+        showToast('V9/V8 недоступні — перемкнено на V7e', 'info');
+        renderRecommendations();
+      }
     }
   }
 }
