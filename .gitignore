@@ -9,4 +9,7 @@ research/data/matchups_DIVINE_IMMORTAL.json
 research/data/*.joblib
 research/data/v8b_ranker.txt
 research/data/v8b_model.json
+research/data/v9c_ranker.txt
+research/data/matches_public_divine_phaseB.json
+research/data/stratz_todo.json
 test-plan-v7e.md
