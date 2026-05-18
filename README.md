@@ -5,45 +5,53 @@ Web-додаток для прогнозування найкращого виб
 ## Можливості
 
 - **Вибір позиції (1-5)**: Carry, Mid, Offlane, Soft Support, Hard Support
-- **Дві моделі рекомендацій** (вибір у заголовку):
-  - **M1 — Curated** (default): курована мапа `HERO_POSITIONS` + OpenDota matchup-дані. Стабільна, працює офлайн.
-  - **V7e — GBM** (beta): Gradient Boosted дерева, навчені на 1381 Divine+ матчах. **2× краще top-10 точність** проти M1 ([детальний звіт](research/FINDINGS.md)).
-- **Драфт-панель**: додавайте союзних та ворожих героїв
-- **Рекомендації в реальному часі**: алгоритм аналізує та рекомендує найкращих героїв
-- **Counter-pick аналіз**: враховує матчапи проти ворожих героїв
-- **Фільтри**: пошук за назвою, фільтрація за атрибутом (STR/AGI/INT/UNI)
-- **Гарячі клавіші**: `1-5` позиція, `Q` перемикання режиму, `R` скидання
+- **Чотири моделі рекомендацій** (вибір у заголовку):
+  - **V8 fair — sklearn GBM** (default): 300 дерев, 25 фіч.
+  - **V9c fair — LightGBM lambdarank**: 400 дерев, 25 фіч.
+  - **V10c fair — LightGBM lambdarank + team-composition**: 400 дерев, 39 фіч.
+  - **V7e — GBM**: 5-фічний baseline.
+- **Драфт-панель**: додавайте союзних та ворожих героїв.
+- **Рекомендації в реальному часі**: алгоритм аналізує та рекомендує топ-10 героїв.
+- **Counter-pick аналіз**: враховує матчапи проти ворожих героїв.
+- **Фільтри**: пошук за назвою, фільтрація за атрибутом (STR/AGI/INT/UNI).
+- **Гарячі клавіші**: `1-5` позиція, `Q` перемикання режиму, `R` скидання.
 
-## Бектест (1381 Divine+ ranked match)
+## Honest backtest (1256 newest matches held out)
 
-| Модель | Pick top-10 | Pick top-5 | Pick top-1 | Mean rank | Win-pred acc |
-|---|---|---|---|---|---|
-| M0 (role-baseline) | 12.4% | 4.4% | 0.4% | 40.3 | 50.7% |
-| **M1** (production) | 24.1% | 6.1% | 0.2% | 28.5 | 50.0% |
-| M5* (logistic, trained) | 8.8% | 4.3% | 0.8% | 31.0 | 52.2% |
-| **V7e** (GBM, pick-rec) | **48.2%** | **32.8%** | **9.3%** | **16.8** | **57.1%** |
+Усі моделі натреновані на найстаріших 5026 матчах, оцінені на 1256 найновіших
+(які жодна модель ніколи не бачила під час тренування):
+
+| Модель | Архітектура | top-1 | top-5 | top-10 | mean rank |
+|---|---|---:|---:|---:|---:|
+| **V8 fair** (default) | sklearn GBM, 25 features | **17.5%** | **39.1%** | **57.5%** | **12.22** |
+| V9c fair | LightGBM lambdarank, 25 features | 17.4% | 38.6% | 57.3% | 12.35 |
+| V10c fair | LightGBM lambdarank + team-comp, 39 features | 17.1% | 39.3% | 57.4% | 12.32 |
+| V7e | sklearn GBM, 5 features | 18.1% | 41.2% | 55.9% | 12.65 |
+
+> Note: previously reported V9c "74% top-10" and V8 "62% top-10" were
+> inflated due to a train-test leak. See
+> [research/FAIR_EVALUATION_FINDINGS.md](research/FAIR_EVALUATION_FINDINGS.md)
+> for the full explanation and
+> [research/EVALUATION.md](research/EVALUATION.md) for proper methodology.
 
 ## Джерело даних
 
-Використовує [OpenDota API](https://docs.opendota.com/) (безкоштовний, без API ключа):
-- `/api/heroStats` — статистика героїв (winrate по рангах)
-- `/api/heroes/{id}/matchups` — матчапи (counter-pick дані)
+Використовує [OpenDota API](https://docs.opendota.com/) (безкоштовний, без API ключа)
++ [STRATZ GraphQL](https://stratz.com/api) для enrichment:
+- `/api/heroStats` — статистика героїв
+- STRATZ GraphQL — рангові матчі, позиційні winrate'и, синергії, counter-pair дані
 
-## Алгоритм скорингу
+## Алгоритм
 
-Для кожного кандидата обчислюється зважений скор:
+V8/V9/V10 — gradient boosted trees, натреновані на 5026 Divine+ матчах
+(чесний chronological 80/20 split). Кожен кандидат-герой описується 25
+фічами (per-position синергія/counter, min/max/spread, one-hot позиції,
+popularity, role-gap). V10 додає 14 додаткових team-composition фіч
+(role counts, magic/agi/int ratios, illusion flags).
 
-| Компонент | Вага (без ворогів) | Вага (з ворогами) |
-|---|---|---|
-| Base Winrate | 45% | 25% |
-| Position Fit | 40% | 20% |
-| Counter Score | 0% | 40% |
-| Synergy | 15% | 15% |
-
-- **Base Winrate**: вінрейт героя у рангах Archon-Divine
-- **Position Fit**: наскільки ролі героя відповідають обраній позиції
-- **Counter Score**: середня перевага проти ворожих героїв (з matchup даних)
-- **Synergy**: різноманітність ролей у команді
+Інференс у браузері: модель завантажується як JSON, ~400 дерев обходяться
+sub-millisecond. Вихід — score 0..1 (sigmoid від raw tree-sum для V8;
+sigmoid від ranker score для V9/V10), використовується лише для ранжування.
 
 ## Запуск
 
@@ -57,8 +65,7 @@ npx serve .
 
 ## Технології
 
-- Vanilla JavaScript (ES6+)
+- Vanilla JavaScript (ES6+) — інференс GBM/LightGBM моделей у браузері
+- Python (`research/`) — тренування, бектест, експорт моделей
 - HTML5 + CSS3 (CSS Grid, Flexbox)
-- OpenDota API (CORS-enabled)
-- Кешування у пам'яті з TTL 30 хв
-- Retry з exponential backoff для API запитів
+- OpenDota API + STRATZ GraphQL
