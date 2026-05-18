@@ -197,7 +197,10 @@ const state = {
   attrFilter: 'all',
   loading: true,
   lastRecs: [],         // cached recommendations for modal lookup
-  modelMode: 'v9',      // 'v9' (LGBM Ranker default) | 'v8' (GBM++ Phase A) | 'v7e' (GBM) | 'm3' (TrueSynergy)
+  // After fair re-evaluation, V8 has the highest honest top-10 (57.5%) and is
+  // the new default. V9c fair = 57.3%, V10c fair = 57.4%, V7e = 55.9%.
+  // The previously deployed V9c "74% top-10" was inflated by a train-test leak.
+  modelMode: 'v8',      // 'v8' (fair default) | 'v9' (LGBM Ranker fair) | 'v10' (LGBM + team-comp) | 'v7e' (5-feature GBM)
 };
 
 // ============================================================
@@ -288,7 +291,7 @@ async function loadHeroes() {
 
 /**
  * Fallback: build the hero list from `data/heroes_v2.json` + `data/position_stats.json`
- * (already shipped with V7e/M3). Lets the app function fully when OpenDota is down.
+ * (already shipped with V7e/V8/V9/V10). Lets the app function fully when OpenDota is down.
  */
 async function loadHeroesFromCache() {
   try {
@@ -527,26 +530,28 @@ function computeSynergyBreakdown(heroId, allies) {
 function computeRecommendations() {
   if (!state.selectedPosition) return [];
 
-  // V9 dispatch (default) — Phase B LightGBM Ranker (lambdarank): 400 trees on
-  // 6282 Divine+ matches with pairwise ranking objective. Same 25 features as V8.
-  // Held-out top-10 = 74.0% (vs V8 61.9%, V7e 55.9%).
+  // V8 dispatch (default after fair re-evaluation) — sklearn GradientBoostingClassifier,
+  // 300 trees on 5026 oldest matches (1256 newest held-out). Honest top-10 = 57.5%.
+  if (state.modelMode === 'v8' && window.V8 && window.V8.ready) {
+    return computeRecommendationsV8();
+  }
+
+  // V9c fair dispatch — LightGBM lambdarank on 5026 matches. Honest top-10 = 57.3%.
+  // Kept as backup; under our current snapshot dataset it ties V8 but is slower.
   if (state.modelMode === 'v9' && window.V9 && window.V9.ready) {
     return computeRecommendationsV9();
   }
 
-  // V8 model dispatch — Phase A GBM: 25 features, sklearn GradientBoostingClassifier.
-  if (state.modelMode === 'v8' && window.V8 && window.V8.ready) {
-    return computeRecommendationsV8();
+  // V10c fair dispatch — V9c + 14 team-composition features. Honest top-10 = 57.4%.
+  // Team-comp gives ~0pp uplift on the current 12-hour snapshot dataset; kept
+  // for the architecture exploration.
+  if (state.modelMode === 'v10' && window.V10 && window.V10.ready) {
+    return computeRecommendationsV10();
   }
 
   // V7e model dispatch — backup; smaller 5-feature GBM trained on the same data.
   if (state.modelMode === 'v7e' && window.V7e && window.V7e.ready) {
     return computeRecommendationsV7e();
-  }
-
-  // M3 dispatch — STRATZ R.O.S.H.-equivalent TrueSynergy formula (no training).
-  if (state.modelMode === 'm3' && window.M3 && window.M3.ready) {
-    return computeRecommendationsM3();
   }
 
   // No model is ready yet (initial load); empty list signals the UI to wait.
@@ -558,14 +563,14 @@ function clamp(v, min = 0, max = 1) {
 }
 
 // ============================================================
-// V9 Model Recommendations (Phase B — default)
-// LightGBM LGBMRanker (lambdarank) on 6282 Divine+ matches, 400 trees,
-// num_leaves=63, lr=0.05. Same 25 features as V8 (per-position-pair
-// synergy/counter, min/max/spread, target one-hot, popularity, role-gap),
-// but pairwise ranking objective unlocks signal that binary classification
-// could not extract.
-// Held-out backtest: top-10=74.0% (vs V8 61.9%, V7e 55.9%).
-// Win-uplift: +17.4pp top-10 winners vs losers (vs V8 +1.4pp).
+// V9c Model Recommendations (fair retrain — backup)
+// LightGBM LGBMRanker (lambdarank) on 5026 Divine+ matches, 400 trees,
+// num_leaves=63, lr=0.05. Same 25 features as V8.
+// Honest held-out backtest (1256 newest matches, NEVER seen in training):
+//   top-10 = 57.3%  top-5 = 38.6%  top-1 = 17.4%
+// Originally reported as 74% top-10 — that figure was inflated by a train-
+// test leak (model was trained on all 6282 matches then evaluated on a
+// 1256-subset it had seen). See research/FAIR_EVALUATION_FINDINGS.md.
 // ============================================================
 function computeRecommendationsV9() {
   const v9 = window.V9;
@@ -625,11 +630,14 @@ function computeRecommendationsV9() {
 }
 
 // ============================================================
-// V8 Model Recommendations (Phase A)
-// 25 features: per-position-pair synergy/counter, min/max/spread stats,
-// target one-hot, popularity, role-gap. Trained on 1381 Divine+ matches.
-// Auto-infers ally/enemy positions internally from STRATZ pos stats.
-// CV top-10: ~55.5% (vs V7e 48.2%, M3 16.7%).
+// V8 Model Recommendations (fair retrain — default after Plan B)
+// sklearn GradientBoostingClassifier on 5026 Divine+ matches, 300 trees,
+// max_depth=4, lr=0.05. 25 features: per-position-pair synergy/counter,
+// min/max/spread stats, target one-hot, popularity, role-gap.
+// Honest held-out backtest (1256 newest matches, NEVER seen in training):
+//   top-10 = 57.5%  top-5 = 39.1%  top-1 = 17.5%
+// V8 is the new default because it has the best honest top-10 of the four
+// models, is the simplest architecture, and the smallest JSON payload.
 // ============================================================
 function computeRecommendationsV8() {
   const v8 = window.V8;
@@ -742,51 +750,72 @@ function computeRecommendationsV7e() {
 }
 
 // ============================================================
-// M3 — STRATZ R.O.S.H. TrueSynergy
-// Pure additive formula:
-//   TS(h) = (winrate@pos − 50) + Σ synergy(h, ally) + Σ counter(h, enemy)
-// All values in percentage points. No model training required.
+// V10c Model Recommendations (fair retrain — team-composition variant)
+// LightGBM LGBMRanker (lambdarank) on 5026 Divine+ matches, 400 trees,
+// num_leaves=63, lr=0.05. 39 features = V9c's 25 + 14 team-composition
+// (role counts, magic/agi/int ratios, illusion flags).
+// Honest held-out backtest (1256 newest matches, NEVER seen in training):
+//   top-10 = 57.4%  top-5 = 39.3%  top-1 = 17.1%
+// Team-comp features showed +0.1pp over V9c — within noise. We expect them
+// to deliver real signal once we have a broader temporal-spread dataset.
 // ============================================================
-function computeRecommendationsM3() {
-  const m3 = window.M3;
+function computeRecommendationsV10() {
+  const v10 = window.V10;
   const pos = state.selectedPosition;
-  const ranked = m3.rank(pos, state.allies, state.enemies);
+  const ranked = v10.rank(pos, state.allies, state.enemies);
   const top = ranked.slice(0, TOP_RECOMMENDATIONS);
 
   return top.map(entry => {
     const hero = state.heroMap[entry.heroId];
     if (!hero) return null;
+    const elig = v10.eligibility[entry.heroId] || [];
+    const isPrimary = elig[0] === pos;
+    const c = entry.components;
 
     const tags = [];
-    tags.push({ type: 'wr', text: `WR ${entry.baseWinrate.toFixed(1)}%` });
-    tags.push({ type: 'fit', text: `Pos ${pos}` });
+    tags.push({ type: 'wr', text: `WR ${(c.base_wr * 100).toFixed(1)}%` });
+    if (isPrimary) tags.push({ type: 'fit', text: `Pos ${pos}` });
+    else tags.push({ type: 'fit-flex', text: `Pos ${pos} (flex)` });
 
-    if (state.allies.length > 0 && entry.synergyTotal !== 0) {
-      const sign = entry.synergyTotal >= 0 ? '+' : '';
-      tags.push({ type: 'synergy', text: `synergy ${sign}${entry.synergyTotal.toFixed(1)}` });
+    if (state.enemies.length > 0) {
+      const advPct = c.vs_adv_total * 100;
+      if (Math.abs(advPct) >= 0.5) {
+        const sign = advPct >= 0 ? '+' : '';
+        tags.push({ type: 'counter', text: `vs ${sign}${advPct.toFixed(1)}%` });
+      }
     }
-    if (state.enemies.length > 0 && entry.counterTotal !== 0) {
-      const sign = entry.counterTotal >= 0 ? '+' : '';
-      tags.push({ type: 'counter', text: `vs ${sign}${entry.counterTotal.toFixed(1)}` });
+    if (state.allies.length > 0) {
+      const synPct = c.with_syn_total * 100;
+      if (synPct >= 0.5) tags.push({ type: 'synergy', text: `synergy +${synPct.toFixed(1)}%` });
     }
-    tags.push({ type: 'ts', text: `TS ${entry.trueSynergy >= 0 ? '+' : ''}${entry.trueSynergy.toFixed(1)}` });
-    tags.push({ type: 'model', text: 'M3' });
+    tags.push({ type: 'model', text: 'V10' });
 
     return {
       hero,
-      score: entry.scoreNormalized, // 0..1 sigmoid-mapped TS for UI consistency
+      score: entry.score,
       tags,
-      components: entry,
+      components: c,
       breakdown: {
-        model: 'm3',
-        trueSynergy: entry.trueSynergy,
-        baseWinrate: entry.baseWinrate,
-        baseAdvantage: entry.baseAdvantage,
-        synergyTotal: entry.synergyTotal,
-        counterTotal: entry.counterTotal,
-        synergyPerAlly: entry.synergyPerAlly,
-        counterPerEnemy: entry.counterPerEnemy,
-        // For Why? modal compatibility:
+        model: 'v10',
+        positionRank: isPrimary ? 'primary' : 'flex',
+        baseWr: c.base_wr,
+        withTotal: c.with_syn_total,
+        vsTotal: c.vs_adv_total,
+        withMax: c.with_max,
+        vsMax: c.vs_max,
+        roleGap: c.role_gap,
+        teamComp: {
+          team_init: c.team_init,
+          team_disabler: c.team_disabler,
+          team_nuker: c.team_nuker,
+          team_pusher: c.team_pusher,
+          team_durable: c.team_durable,
+          team_agi_ratio: c.team_agi_ratio,
+          team_int_ratio: c.team_int_ratio,
+          team_has_illusions: c.team_has_illusions,
+          enemy_has_illusions: c.enemy_has_illusions,
+        },
+        rawFeatures: c.features,
         weights: null,
         contributions: null,
         counter: null,
@@ -952,54 +981,6 @@ function showScoreModal(rec) {
   titleEl.textContent = hero.name;
   scoreEl.innerHTML = `${(score * 100).toFixed(0)}`;
 
-  // M3 modal: ROSH-style additive breakdown (base WR + per-ally synergy + per-enemy counter).
-  if (breakdown && breakdown.model === 'm3') {
-    subtitleEl.textContent = `Pos ${state.selectedPosition} (${posName}) — Модель: M3 (TrueSynergy)`;
-    const fmtPP = v => `${v >= 0 ? '+' : ''}${v.toFixed(2)} pp`;
-
-    const allyName = id => (state.heroMap[id] || {}).name || `#${id}`;
-    const enemyName = id => (state.heroMap[id] || {}).name || `#${id}`;
-
-    const synergyRowsHtml = breakdown.synergyPerAlly.length
-      ? breakdown.synergyPerAlly.map(s => {
-          if (!s.qualified) {
-            return `<div class="score-detail"><span>+ з ${allyName(s.heroId)}</span><span>${s.games > 0 ? `мало даних (${s.games})` : 'дані відсутні'}</span></div>`;
-          }
-          const cls = s.value > 0 ? 'pos-val' : s.value < 0 ? 'neg-val' : '';
-          return `<div class="score-detail"><span>+ з ${allyName(s.heroId)}</span><span class="${cls}">${fmtPP(s.value)} (n=${s.games})</span></div>`;
-        }).join('')
-      : '<div class="score-detail"><span>Синергії</span><span>немає союзників</span></div>';
-
-    const counterRowsHtml = breakdown.counterPerEnemy.length
-      ? breakdown.counterPerEnemy.map(c => {
-          if (!c.qualified) {
-            return `<div class="score-detail"><span>+ vs ${enemyName(c.heroId)}</span><span>${c.games > 0 ? `мало даних (${c.games})` : 'дані відсутні'}</span></div>`;
-          }
-          const cls = c.value > 0 ? 'pos-val' : c.value < 0 ? 'neg-val' : '';
-          return `<div class="score-detail"><span>+ vs ${enemyName(c.heroId)}</span><span class="${cls}">${fmtPP(c.value)} (n=${c.games})</span></div>`;
-        }).join('')
-      : '<div class="score-detail"><span>Каунтери</span><span>немає ворогів</span></div>';
-
-    bodyEl.innerHTML = `
-      <div class="score-section-title">Розбивка TrueSynergy</div>
-      <div class="score-detail"><span>Base WR на Pos ${state.selectedPosition}</span><span>${breakdown.baseWinrate.toFixed(2)}% (${fmtPP(breakdown.baseAdvantage)})</span></div>
-      <div class="score-detail"><span>Сумарна синергія з союзниками</span><span class="${breakdown.synergyTotal > 0 ? 'pos-val' : breakdown.synergyTotal < 0 ? 'neg-val' : ''}">${fmtPP(breakdown.synergyTotal)}</span></div>
-      <div class="score-detail"><span>Сумарний counter проти ворогів</span><span class="${breakdown.counterTotal > 0 ? 'pos-val' : breakdown.counterTotal < 0 ? 'neg-val' : ''}">${fmtPP(breakdown.counterTotal)}</span></div>
-      <div class="score-detail" style="font-weight:700"><span>TrueSynergy (TS)</span><span class="${breakdown.trueSynergy > 0 ? 'pos-val' : 'neg-val'}">${fmtPP(breakdown.trueSynergy)}</span></div>
-
-      <div class="score-section-title">Per-ally synergy</div>
-      ${synergyRowsHtml}
-
-      <div class="score-section-title">Per-enemy counter</div>
-      ${counterRowsHtml}
-
-      <div class="score-section-title">Як працює M3</div>
-      <div class="score-detail-text">M3 — точна реалізація R.O.S.H.-формули від STRATZ: <code>TS = (winrate@pos − 50) + Σ синергія з союзниками + Σ counter проти ворогів</code>. Немає тренованих ваг — лише публічні STRATZ-дані Divine+. Score (відображається як %) — sigmoid від TS для зручності перегляду.</div>
-    `;
-    backdrop.hidden = false;
-    return;
-  }
-
   // V7e modal: shows feature contributions instead of weighted components
   if (breakdown && breakdown.model === 'v7e') {
     const c = components;
@@ -1017,18 +998,24 @@ function showScoreModal(rec) {
       <div class="score-detail"><span>Role Gap fill</span><span>${(c.role_gap * 100).toFixed(0)}%</span></div>
 
       <div class="score-section-title">Як працює V7e</div>
-      <div class="score-detail-text">Gradient Boosting (200 дерев) натренований на 1381 Divine+ матчах: для кожного з 5 фіч модель будує дерево вирішень, фінальний скор — sigmoid від суми внесків дерев. CV top-10 = ${((window.V7e?.model?.trees?.length || 0) > 0 ? '52.7%' : 'n/a')}, що ~2.1× краще за M1 (24.6%).</div>
+      <div class="score-detail-text">Gradient Boosting (200 дерев) натренований на 1381 Divine+ матчах: для кожного з 5 фіч модель будує дерево вирішень, фінальний скор — sigmoid від суми внесків дерев. Honest top-10 = 55.9% на 1256 нових матчах.</div>
     `;
     backdrop.hidden = false;
     return;
   }
 
-  // V9/V8 modal: feature breakdown for the 25-feature pick-rec models
-  if (breakdown && (breakdown.model === 'v8' || breakdown.model === 'v9')) {
+  // V8 / V9 / V10 modal: feature breakdown for the pick-rec models that share
+  // the 25 V8 base features (V10 adds 14 team-composition features on top).
+  if (breakdown && (breakdown.model === 'v8' || breakdown.model === 'v9' || breakdown.model === 'v10')) {
     const c = components;
     const isV9 = breakdown.model === 'v9';
-    const modelObj = isV9 ? window.V9 : window.V8;
-    const modelLabel = isV9 ? 'V9 (LightGBM Ranker, Phase B)' : 'V8 (GBM++ Phase A)';
+    const isV10 = breakdown.model === 'v10';
+    const modelObj = isV10 ? window.V10 : isV9 ? window.V9 : window.V8;
+    const modelLabel = isV10
+      ? 'V10c fair (LightGBM Ranker + team-comp, 57.4% top-10)'
+      : isV9
+        ? 'V9c fair (LightGBM Ranker, 57.3% top-10)'
+        : 'V8 fair (sklearn GBM, 57.5% top-10)';
     const elig = (modelObj?.eligibility[hero.id]) || [];
     const allPosNames = elig.map(p => `Pos ${p}`).join(' / ');
     subtitleEl.textContent = `${allPosNames || 'без даних'} — обрано Pos ${state.selectedPosition} (${posName}), ${breakdown.positionRank === 'primary' ? 'основна' : 'флекс'}. Модель: ${modelLabel}`;
@@ -1068,10 +1055,24 @@ function showScoreModal(rec) {
       <div class="score-detail"><span>Сума counter</span><span class="${vsPct > 0 ? 'pos-val' : vsPct < 0 ? 'neg-val' : ''}">${vsPct >= 0 ? '+' : ''}${vsPct.toFixed(2)}%</span></div>
       <div class="score-detail"><span>Найсильніший counter</span><span class="${vMaxPct > 0 ? 'pos-val' : ''}">${vMaxPct >= 0 ? '+' : ''}${vMaxPct.toFixed(2)}%</span></div>
 
-      <div class="score-section-title">${isV9 ? 'Як працює V9 (Phase B)' : 'Як працює V8 (Phase A)'}</div>
-      <div class="score-detail-text">${isV9
-        ? 'LightGBM LGBMRanker (pairwise lambdarank) на 400 деревах + 25 фічах: окремі синергії/counter по позиціях, min/max/spread статистики, one-hot цільової позиції. Натренована на 6282 Divine+ матчах через pairwise ranking — модель вчиться ставити справжній пік вище за випадковий, а не передбачає бінарне "пікнуто/ні". Held-out top-10 = 74.0% (V8 61.9%, V7e 55.9%). Win-uplift: +17pp winners vs losers.'
-        : 'Gradient Boosting на 300 деревах + 25 фічах: окремі синергії/counter по позиціях, min/max/spread статистики, one-hot цільової позиції. Натренована на 1381 Divine+ матчах. Позиції союзників/ворогів автоматично визначаються з кешу. CV top-10 = 55.5% (V7e 48.2%, M3 16.7%).'}</div>
+      ${isV10 ? `
+      <div class="score-section-title">Team composition (V10)</div>
+      <div class="score-detail"><span>Initiators (team)</span><span>${breakdown.teamComp?.team_init ?? 0}</span></div>
+      <div class="score-detail"><span>Disablers (team)</span><span>${breakdown.teamComp?.team_disabler ?? 0}</span></div>
+      <div class="score-detail"><span>Nukers (team)</span><span>${breakdown.teamComp?.team_nuker ?? 0}</span></div>
+      <div class="score-detail"><span>Pushers (team)</span><span>${breakdown.teamComp?.team_pusher ?? 0}</span></div>
+      <div class="score-detail"><span>Durables (team)</span><span>${breakdown.teamComp?.team_durable ?? 0}</span></div>
+      <div class="score-detail"><span>Agi heroes ratio</span><span>${((breakdown.teamComp?.team_agi_ratio ?? 0) * 100).toFixed(0)}%</span></div>
+      <div class="score-detail"><span>Int heroes ratio</span><span>${((breakdown.teamComp?.team_int_ratio ?? 0) * 100).toFixed(0)}%</span></div>
+      <div class="score-detail"><span>Has illusion core</span><span>team=${breakdown.teamComp?.team_has_illusions ? 'так' : 'ні'} / enemy=${breakdown.teamComp?.enemy_has_illusions ? 'так' : 'ні'}</span></div>
+      ` : ''}
+
+      <div class="score-section-title">${isV10 ? 'Як працює V10' : isV9 ? 'Як працює V9c' : 'Як працює V8'}</div>
+      <div class="score-detail-text">${isV10
+        ? 'LightGBM LGBMRanker (pairwise lambdarank) на 400 деревах + 39 фічах: V9c\'s 25 базових + 14 team-composition (кількість ініціаторів/дизейблерів/нюкерів, magic/agi/int ratios, illusion flags). Натренована чесно на 5026 найстаріших матчах; 1256 найновіших — held-out тест. Honest top-10 = 57.4%. Team-comp фічі дають ~0pp uplift над V9c при поточній 12-годинній виборці — очікуємо більший приріст коли матимемо temporal-spread датасет.'
+        : isV9
+          ? 'LightGBM LGBMRanker (pairwise lambdarank) на 400 деревах + 25 фічах: per-position синергії/counter, min/max/spread, one-hot позиції, popularity, role-gap. Натренована чесно на 5026 найстаріших матчах; 1256 найновіших — held-out тест. Honest top-10 = 57.3%. Раніше повідомлені 74% top-10 були результатом train-test leak (V9c бачила тестові матчі під час тренування).'
+          : 'sklearn GradientBoostingClassifier на 300 деревах + 25 фічах: per-position синергії/counter, min/max/spread, one-hot позиції, popularity, role-gap. Натренована чесно на 5026 найстаріших матчах; 1256 найновіших — held-out тест. Honest top-10 = 57.5% — кращий показник серед усіх наших чесно оцінених моделей.'}</div>
     `;
     backdrop.hidden = false;
     return;
@@ -1260,21 +1261,21 @@ function bindEvents() {
           return;
         }
       }
-      if (newMode === 'm3' && (!window.M3 || !window.M3.ready)) {
-        showToast('Завантажую M3 дані…', 'info');
-        await window.M3.init();
-        if (!window.M3.ready) {
-          showToast('Не вдалося завантажити M3', 'error');
+      if (newMode === 'v10' && (!window.V10 || !window.V10.ready)) {
+        showToast('Завантажую V10 дані…', 'info');
+        await window.V10.init();
+        if (!window.V10.ready) {
+          showToast('Не вдалося завантажити V10', 'error');
           modelSel.value = prevMode;
           return;
         }
       }
       state.modelMode = newMode;
       const labels = {
-        v9: 'Перемкнено на V9 (LightGBM Ranker, Phase B)',
-        v8: 'Перемкнено на V8 (GBM++, Phase A)',
-        v7e: 'Перемкнено на V7e (GBM)',
-        m3: 'Перемкнено на M3 (TrueSynergy / R.O.S.H.)',
+        v8: 'Перемкнено на V8 fair (sklearn GBM, 57.5% top-10)',
+        v9: 'Перемкнено на V9c fair (LightGBM Ranker, 57.3% top-10)',
+        v10: 'Перемкнено на V10c fair (LightGBM + team-comp, 57.4% top-10)',
+        v7e: 'Перемкнено на V7e (GBM 5 features, 55.9% top-10)',
       };
       showToast(labels[newMode] || `Перемкнено на ${newMode}`, 'info');
       renderRecommendations();
@@ -1309,11 +1310,11 @@ async function init() {
   state.loading = true;
   renderHeroGrid();
 
-  // Load hero data and V9 (default model) in parallel so the user can start
-  // drafting as soon as both are ready.
-  const v9InitPromise = (window.V9 && !window.V9.ready) ? window.V9.init() : Promise.resolve();
+  // Load hero data and V8 (default model — best honest top-10) in parallel
+  // so the user can start drafting as soon as both are ready.
+  const v8InitPromise = (window.V8 && !window.V8.ready) ? window.V8.init() : Promise.resolve();
   const success = await loadHeroes();
-  await v9InitPromise;
+  await v8InitPromise;
   state.loading = false;
 
   // Always re-render to remove the loading spinner — even on failure we render
@@ -1324,15 +1325,15 @@ async function init() {
     renderRecommendations();
   }
 
-  // If V9 failed to load, fall back to V8, then V7e (in order of preference).
-  if (!window.V9 || !window.V9.ready) {
-    console.warn('[V9] not ready after init — falling back to V8');
-    if (window.V8 && !window.V8.ready) await window.V8.init();
-    if (window.V8?.ready) {
-      state.modelMode = 'v8';
+  // If V8 failed to load, fall back to V9, then V7e (in order of preference).
+  if (!window.V8 || !window.V8.ready) {
+    console.warn('[V8] not ready after init — falling back to V9');
+    if (window.V9 && !window.V9.ready) await window.V9.init();
+    if (window.V9?.ready) {
+      state.modelMode = 'v9';
       const sel = document.getElementById('modelSelect');
-      if (sel) sel.value = 'v8';
-      showToast('V9 недоступний — перемкнено на V8', 'info');
+      if (sel) sel.value = 'v9';
+      showToast('V8 недоступний — перемкнено на V9', 'info');
       renderRecommendations();
     } else {
       if (window.V7e && !window.V7e.ready) await window.V7e.init();
@@ -1340,7 +1341,7 @@ async function init() {
         state.modelMode = 'v7e';
         const sel = document.getElementById('modelSelect');
         if (sel) sel.value = 'v7e';
-        showToast('V9/V8 недоступні — перемкнено на V7e', 'info');
+        showToast('V8/V9 недоступні — перемкнено на V7e', 'info');
         renderRecommendations();
       }
     }
